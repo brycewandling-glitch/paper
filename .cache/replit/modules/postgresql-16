@@ -1,0 +1,1 @@
+{"debuggers":{},"demoted":false,"description":"Tools for working with Postgresql databases.\n","displayVersion":"16","env":{"PATH":"/nix/store/bgwr5i8jf8jpg75rr53rz3fqv5k8yrwp-postgresql-16.10/bin"},"formatters":{},"id":"postgresql-16","initializers":{},"internal":false,"languageServers":{},"name":"Postgresql Tools","packagers":{},"runners":{}}

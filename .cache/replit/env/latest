@@ -1,0 +1,71 @@
+declare -gx NIX_PS1='\[\033[01;34m\]\w\[\033[00m\]\$ '
+declare -gx LANG=en_US.UTF-8
+declare -gx DISPLAY=:0
+declare -gx REPL_LANGUAGE=nix
+declare -gx REPLIT_PID1_VERSION=0.0.0-179b891
+declare -gx LIBGL_DRIVERS_PATH=/nix/store/l4myp7qn0q9bqgmkqq4vnnii22ql1r68-mesa-25.0.7/lib/dri
+declare -gx REPL_OWNER_ID=47971460
+declare -gx REPLIT_CONNECTORS_HOSTNAME=connectors.replit.com
+declare -gx REPLIT_HELIUM_ENABLED=true
+declare -gx PGHOST=helium
+declare -gx REPLIT_LD_AUDIT=/nix/store/6y0zqxaf220r36b74hwsq9m2b2av3lw7-replit_rtld_loader-1/rtld_loader.so
+declare -gx PKG_CONFIG_PATH=''
+read -r _new_path <<< "/nix/store/ig56yz6lgkmlwjvkrdz51pp94212kwyf-zip-3.0/bin:/nix/store/bgwr5i8jf8jpg75rr53rz3fqv5k8yrwp-postgresql-16.10/bin:/nix/store/djy8g4cghlw19fmy6zblim1waxkr7mf2-npx/bin:/home/runner/workspace/.config/npm/node_global/bin:/home/runner/workspace/node_modules/.bin:/nix/store/8y4ls7z2sfxbq6ch3yp45l28p29qswvx-nodejs-20.19.3-wrapped/bin:/nix/store/nj22dzxzzx4m80lfa91fzqh8k9lvwigw-bun-1.2.16/bin:/nix/store/pciji08qkvcg3191yykpfipdcbbic9k5-pnpm-10.12.4/bin:/nix/store/6mzbvyzh4dfgfab6lciclji7awp9w3c4-yarn-1.22.22/bin:/nix/store/gvg9vrp821nmnyf9pxig6pss1sjywd5w-prettier-3.5.3/bin:/nix/store/38s4r06nnl4r9jqvhb8wbiyxk1frpld1-pid1/bin:/nix/store/d6mad4dkf6akii90k26dinhrg8a3xia8-replit-runtime-path/bin:/home/runner/.nix-profile/bin:/home/runner/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+#PATH=/nix/store/ig56yz6lgkmlwjvkrdz51pp94212kwyf-zip-3.0/bin:/nix/store/bgwr5i8jf8jpg75rr53rz3fqv5k8yrwp-postgresql-16.10/bin:/nix/store/djy8g4cghlw19fmy6zblim1waxkr7mf2-npx/bin:/home/runner/workspace/.config/npm/node_global/bin:/home/runner/workspace/node_modules/.bin:/nix/store/8y4ls7z2sfxbq6ch3yp45l28p29qswvx-nodejs-20.19.3-wrapped/bin:/nix/store/nj22dzxzzx4m80lfa91fzqh8k9lvwigw-bun-1.2.16/bin:/nix/store/pciji08qkvcg3191yykpfipdcbbic9k5-pnpm-10.12.4/bin:/nix/store/6mzbvyzh4dfgfab6lciclji7awp9w3c4-yarn-1.22.22/bin:/nix/store/gvg9vrp821nmnyf9pxig6pss1sjywd5w-prettier-3.5.3/bin:/nix/store/38s4r06nnl4r9jqvhb8wbiyxk1frpld1-pid1/bin:/nix/store/d6mad4dkf6akii90k26dinhrg8a3xia8-replit-runtime-path/bin:/home/runner/.nix-profile/bin:/home/runner/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+if [ -e "/run/replit/env/last" ]; then read -r _last_path < <(\grep '^#PATH=' /run/replit/env/last | cut -f 2 -d =); fi
+_user_components="$(\tr : $'\n' <<< "${PATH:-}" |\grep -xv -f <(\tr : $'\n' <<< "${_last_path}") |\tr $'\n' :)"
+declare -gx PATH="${_user_components}${_new_path}"
+declare -gx LOCALE_ARCHIVE=/usr/lib/locale/locale-archive
+declare -gx GLIBC_TUNABLES=glibc.rtld.optional_static_tls=10000
+declare -gx LDFLAGS=''
+declare -gx NIX_LDFLAGS=''
+declare -gx PKG_CONFIG_PATH_FOR_TARGET=''
+declare -gx HOSTNAME=79cee96f5100
+declare -gx REPLIT_BASHRC=/nix/store/lsgsb0ar7rdwa09d1z2dnfjh4188pddk-replit-bashrc/bashrc
+declare -gx REPLIT_NIX_CHANNEL=stable-24_05
+declare -gx REPLIT_ENVIRONMENT=production
+declare -gx NIX_CFLAGS_COMPILE=''
+declare -gx REPLIT_DEV_DOMAIN=83483933-1bb3-419d-9ac8-28bcc167d762-00-wludvvszcx9s.worf.replit.dev
+declare -gx REPLIT_SUBCLUSTER=paid
+declare -gx REPLIT_CONTAINER=gcr.io/marine-cycle-160323/repl-base:3c526f0870c482ef04b1ca6073a0d578ba34e814
+declare -gx __EGL_VENDOR_LIBRARY_FILENAMES=/nix/store/l4myp7qn0q9bqgmkqq4vnnii22ql1r68-mesa-25.0.7/share/glvnd/egl_vendor.d/50_mesa.json
+declare -gx REPLIT_GITSAFE_NEW_REPLS_ENABLED=true
+declare -gx PGUSER=postgres
+declare -gx REPLIT_GITSAFE_EXISTING_REPLS_ENABLED=false
+declare -gx HOME=/home/runner
+declare -gx REPL_PUBKEYS='{"crosis-ci":"7YlpcYh82oR9NSTtSYtR5jDL4onNzCGJGq6b+9CuZII=","crosis-ci:1":"7YlpcYh82oR9NSTtSYtR5jDL4onNzCGJGq6b+9CuZII=","crosis-ci:latest":"7YlpcYh82oR9NSTtSYtR5jDL4onNzCGJGq6b+9CuZII=","prod":"tGsjlu/BJvWTgvMaX7acuUb7AO1dXOrRiuk7y083RFE=","prod:1":"tGsjlu/BJvWTgvMaX7acuUb7AO1dXOrRiuk7y083RFE=","prod:3":"9+MCOSHQSQlcodXoot8dC8NLhc862nLkx1/VMsbY2h8=","prod:4":"8uGN+vfszlnV93/HCSHlVLG0xddMlPkir1Ni4JKT4+w=","prod:5":"9+MCOSHQSQlcodXoot8dC8NLhc862nLkx1/VMsbY2h8=","prod:latest":"tGsjlu/BJvWTgvMaX7acuUb7AO1dXOrRiuk7y083RFE=","vault-goval-token":"D5jJoMx1Ml54HM92NLgXl+MzptwDqbSsfyFG6f52g9E=","vault-goval-token:1":"D5jJoMx1Ml54HM92NLgXl+MzptwDqbSsfyFG6f52g9E=","vault-goval-token:latest":"D5jJoMx1Ml54HM92NLgXl+MzptwDqbSsfyFG6f52g9E="}'
+declare -gx PGPASSWORD=password
+declare -gx REPL_OWNER=brycewandling
+declare -gx XDG_DATA_HOME=/home/runner/workspace/.local/share
+declare -gx npm_config_prefix=/home/runner/workspace/.config/npm/node_global
+declare -gx REPLIT_RTLD_LOADER=1
+declare -gx NIXPKGS_ALLOW_UNFREE=1
+declare -gx DATABASE_URL='postgresql://postgres:password@helium/heliumdb?sslmode=disable'
+declare -gx REPLIT_GITSAFE_ENABLED=true
+declare -gx GI_TYPELIB_PATH=''
+declare -gx REPL_IMAGE=gcr.io/marine-cycle-160323/nix:bf8590a3e2f0a8b70b7ca175eeed9074dffbfca9
+declare -gx CONNECTORS_HOSTNAME=connectors.replit.com
+declare -gx REPLIT_RIPPKGS_INDICES=/nix/store/cg6q7dm7h9jp20vwj79ahnbsd9cs6iay-rippkgs-indices
+declare -gx NIX_PROFILES='/nix/var/nix/profiles/default /home/runner/.nix-profile'
+declare -gx REPL_ID=83483933-1bb3-419d-9ac8-28bcc167d762
+declare -gx REPL_SLUG=workspace
+declare -gx DOCKER_CONFIG=/home/runner/workspace/.config/docker
+declare -gx PGDATABASE=heliumdb
+declare -gx GIT_ASKPASS=replit-git-askpass
+declare -gx PROMPT_DIRTRIM=2
+declare -gx PORT=5000
+declare -gx REPLIT_CLI=/nix/store/0qqpvzcy8gkach5mjhhyjy39zvv6z5fs-replit-cli-0.0.1/bin/replit
+declare -gx NIX_PATH=nixpkgs=/home/runner/.nix-defexpr/channels/nixpkgs-stable-24_05:/home/runner/.nix-defexpr/channels
+declare -gx REPLIT_CLUSTER=worf
+declare -gx XDG_CONFIG_HOME=/home/runner/workspace/.config
+declare -gx XDG_DATA_DIRS=/nix/store/ig56yz6lgkmlwjvkrdz51pp94212kwyf-zip-3.0/share:/nix/store/d6mad4dkf6akii90k26dinhrg8a3xia8-replit-runtime-path/share
+declare -gx USER=runner
+declare -gx REPL_HOME=/home/runner/workspace
+declare -gx REPLIT_PID1_FLAG_PREEVALED_SYSPKGS=1
+declare -gx XDG_CACHE_HOME=/home/runner/workspace/.cache
+declare -gx PGPORT=5432
+declare -gx REPLIT_DOMAINS=83483933-1bb3-419d-9ac8-28bcc167d762-00-wludvvszcx9s.worf.replit.dev
+declare -gx GIT_EDITOR=replit-git-editor
+declare -gx LD_AUDIT=/nix/store/6y0zqxaf220r36b74hwsq9m2b2av3lw7-replit_rtld_loader-1/rtld_loader.so
+declare -gx CFLAGS=''
+declare -gx COLORTERM=truecolor
