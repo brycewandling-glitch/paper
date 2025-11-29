@@ -1,29 +1,60 @@
 import React, { useState } from 'react';
 import { Layout } from '@/components/Layout';
-import { getPlayers, type Player } from '@/lib/mockData';
+import { type Player } from '@/lib/mockData';
+import { fetchSeasonData, fetchAllTimeData, type SeasonData } from '@/lib/api';
+import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { BarChart3, TrendingUp, TrendingDown, Calendar, Percent } from 'lucide-react';
 
 export default function Papermetrics() {
-  const [selectedSeason, setSelectedSeason] = useState('4');
-  const players = getPlayers();
+  const [selectedSeason, setSelectedSeason] = useState('All-Time');
+
+  // If a specific season like '1','2','3','4' is selected, fetch that season from the sheet.
+  // If 'All-Time' is selected, aggregate all seasons.
+  const seasonQueryKey = selectedSeason === 'All-Time' ? ['papermetrics', 'All-Time'] : ['papermetrics', `Season ${selectedSeason}`];
+  const { data: seasonData, isLoading } = useQuery({
+    queryKey: seasonQueryKey,
+    queryFn: () => selectedSeason === 'All-Time' ? fetchAllTimeData() : fetchSeasonData(`Season ${selectedSeason}`),
+  });
+  
+  const players = seasonData?.players || [];
+  const stats = seasonData?.stats || { parlaysHit: 0, overallWinPercentage: 0, totalWeeks: 0, seasonWins: 0, longestWinStreak: { player: '', length: 0 }, longestLoseStreak: { player: '', length: 0 }, longestPushStreak: { player: '', length: 0 } };
+
+  // Handle loading / empty data
+  if (isLoading) {
+    return (
+      <Layout>
+        <div className="space-y-8 max-w-5xl mx-auto p-6">Loading season data...</div>
+      </Layout>
+    );
+  }
+
+  if (!players || players.length === 0) {
+    return (
+      <Layout>
+        <div className="space-y-8 max-w-5xl mx-auto p-6">
+          <div className="bg-white rounded-lg p-6 shadow-sm border">
+            <h2 className="text-lg font-bold">No data available</h2>
+            <p className="text-sm text-muted-foreground">No player data was found for the selected season. Try a different season or verify the Google Sheet name and permissions.</p>
+          </div>
+        </div>
+      </Layout>
+    );
+  }
 
   // Calculate derived stats for the highlights
   const sortedByWin = [...players].sort((a, b) => b.winPercentage - a.winPercentage);
   const bestWinPlayer = sortedByWin[0];
   const worstWinPlayer = sortedByWin[sortedByWin.length - 1];
   
-  // Simple parsing of streak string "W5" or "L2" to number for sorting
-  const getStreakValue = (streak: string) => {
-    const type = streak.charAt(0);
-    const val = parseInt(streak.substring(1));
-    return type === 'W' ? val : -val;
-  };
-
-  const sortedByStreak = [...players].sort((a, b) => getStreakValue(b.currentStreak) - getStreakValue(a.currentStreak));
-  const bestStreakPlayer = sortedByStreak[0];
-  const worstStreakPlayer = sortedByStreak[sortedByStreak.length - 1];
+  // For streak highlights we will use all-time stats from `stats` when available
+  const longestWin = stats.longestWinStreak ?? { player: '', length: 0 };
+  const longestLose = stats.longestLoseStreak ?? { player: '', length: 0 };
+  // All-Time top totals (wins/losses/pushes)
+  const mostWinsPlayer = [...players].sort((a, b) => b.wins - a.wins)[0];
+  const mostLossesPlayer = [...players].sort((a, b) => b.losses - a.losses)[0];
+  const mostPushesPlayer = [...players].sort((a, b) => b.pushes - a.pushes)[0];
 
   return (
     <Layout>
@@ -105,78 +136,136 @@ export default function Papermetrics() {
           <div className="grid gap-4 md:grid-cols-3 p-6 border-t bg-slate-50/30">
             <div className="flex flex-col items-center justify-center p-4 text-center rounded-lg border bg-white">
               <span className="text-muted-foreground font-medium uppercase tracking-widest text-xs mb-2">Parlays Hit</span>
-              <span className="text-4xl font-bold text-primary font-heading">12</span>
+              <span className="text-4xl font-bold text-primary font-heading">{stats.parlaysHit}</span>
             </div>
             
             <div className="flex flex-col items-center justify-center p-4 text-center rounded-lg border bg-white">
               <span className="text-muted-foreground font-medium uppercase tracking-widest text-xs mb-2">Overall Win %</span>
-              <span className="text-4xl font-bold text-foreground font-heading">52.4%</span>
+              <span className="text-4xl font-bold text-foreground font-heading">{stats.overallWinPercentage.toFixed(1)}%</span>
             </div>
 
             <div className="flex flex-col items-center justify-center p-4 text-center rounded-lg border bg-white">
               <span className="text-muted-foreground font-medium uppercase tracking-widest text-xs mb-2">Total Weeks</span>
-              <span className="text-4xl font-bold text-foreground font-heading">72</span>
+              <span className="text-4xl font-bold text-foreground font-heading">{stats.totalWeeks}</span>
             </div>
           </div>
         </div>
 
-        {/* Performance Highlights - In separate box */}
+        {/* Performance Highlights - Only for All-Time */}
+        {selectedSeason === 'All-Time' && (
         <div className="bg-white rounded-lg shadow-sm border p-6">
           <h3 className="text-xl font-bold mb-6 text-foreground border-b pb-4">Performance Highlights</h3>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             {/* Best Win % */}
-            <Card className="bg-white border-border shadow-sm">
-              <CardContent className="p-4">
-                <div className="text-muted-foreground font-medium uppercase tracking-widest text-xs mb-2 text-center">Best Win %</div>
-                <div className="flex justify-between items-end">
-                  <div className="text-lg font-bold text-foreground">{bestWinPlayer.name}</div>
-                  <div className="bg-green-100 border border-green-200 text-green-800 text-sm font-bold px-2.5 py-1 rounded-md uppercase tracking-wide">
+            <div className="bg-green-50 rounded-lg p-3 shadow-sm border border-green-100 flex flex-col items-center justify-center text-center">
+              <span className="text-xs uppercase tracking-widest text-green-700 font-bold mb-1">Best Win %</span>
+              <div className="flex items-center justify-center gap-2">
+                <div className="text-lg font-bold text-green-800 leading-tight">{bestWinPlayer?.name || '—'}</div>
+                {bestWinPlayer && (
+                  <span className="inline-flex items-center px-1.5 rounded-md border border-green-300 bg-green-100 text-green-800 font-bold text-lg md:text-xl leading-tight">
                     {bestWinPlayer.winPercentage}%
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                  </span>
+                )}
+              </div>
+            </div>
 
             {/* Worst Win % */}
-            <Card className="bg-white border-border shadow-sm">
-              <CardContent className="p-4">
-                <div className="text-muted-foreground font-medium uppercase tracking-widest text-xs mb-2 text-center">Worst Win %</div>
-                <div className="flex justify-between items-end">
-                  <div className="text-lg font-bold text-foreground">{worstWinPlayer.name}</div>
-                  <div className="bg-red-100 border border-red-200 text-red-800 text-sm font-bold px-2.5 py-1 rounded-md uppercase tracking-wide">
+            <div className="bg-rose-50 rounded-lg p-3 shadow-sm border border-rose-100 flex flex-col items-center justify-center text-center">
+              <span className="text-xs uppercase tracking-widest text-rose-700 font-bold mb-1">Worst Win %</span>
+              <div className="flex items-center justify-center gap-2">
+                <div className="text-lg font-bold text-rose-800 leading-tight">{worstWinPlayer?.name || '—'}</div>
+                {worstWinPlayer && (
+                  <span className="inline-flex items-center px-1.5 rounded-md border border-rose-300 bg-rose-100 text-rose-800 font-bold text-lg md:text-xl leading-tight">
                     {worstWinPlayer.winPercentage}%
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                  </span>
+                )}
+              </div>
+            </div>
 
-            {/* Longest Win Streak */}
-            <Card className="bg-white border-border shadow-sm">
-              <CardContent className="p-4">
-                <div className="text-muted-foreground font-medium uppercase tracking-widest text-xs mb-2 text-center">Longest Win Streak</div>
-                <div className="flex justify-between items-end">
-                  <div className="text-lg font-bold text-foreground">{bestStreakPlayer.name}</div>
-                  <div className="bg-green-100 border border-green-200 text-green-800 text-sm font-bold px-2.5 py-1 rounded-md uppercase tracking-wide">
-                    {bestStreakPlayer.currentStreak}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+            {/* Longest Win Streak (All-Time) */}
+            <div className="bg-green-50 rounded-lg p-3 shadow-sm border border-green-100 flex flex-col items-center justify-center text-center">
+              <span className="text-xs uppercase tracking-widest text-green-700 font-bold mb-1">Longest Win Streak</span>
+              <div className="flex items-center justify-center gap-2">
+                <div className="text-xl md:text-2xl font-bold text-green-800 leading-tight">{longestWin.player || '—'}</div>
+                {longestWin.length > 0 && (
+                  <span className="inline-flex items-center px-1.5 rounded-md border border-green-300 bg-green-100 text-green-800 font-bold text-lg md:text-xl leading-tight">W{longestWin.length}</span>
+                )}
+              </div>
+            </div>
 
-            {/* Longest Loss Streak */}
-            <Card className="bg-white border-border shadow-sm">
-              <CardContent className="p-4">
-                <div className="text-muted-foreground font-medium uppercase tracking-widest text-xs mb-2 text-center">Longest Loss Streak</div>
-                <div className="flex justify-between items-end">
-                  <div className="text-lg font-bold text-foreground">{worstStreakPlayer.name}</div>
-                  <div className="bg-red-100 border border-red-200 text-red-800 text-sm font-bold px-2.5 py-1 rounded-md uppercase tracking-wide">
-                    {worstStreakPlayer.currentStreak}
-                  </div>
+            {/* Longest Lose Streak (All-Time) */}
+            <div className="bg-rose-50 rounded-lg p-3 shadow-sm border border-rose-100 flex flex-col items-center justify-center text-center">
+              <span className="text-xs uppercase tracking-widest text-rose-700 font-bold mb-1">Longest Lose Streak</span>
+              <div className="flex items-center justify-center gap-2">
+                <div className="text-xl md:text-2xl font-bold text-rose-800 leading-tight">{longestLose.player || '—'}</div>
+                {longestLose.length > 0 && (
+                  <span className="inline-flex items-center px-1.5 rounded-md border border-rose-300 bg-rose-100 text-rose-800 font-bold text-lg md:text-xl leading-tight">L{longestLose.length}</span>
+                )}
+              </div>
+            </div>
+
+            {/* Most Total Wins (All-Time) */}
+            <div className="bg-green-50 rounded-lg p-3 shadow-sm border border-green-100 flex flex-col items-center justify-center text-center">
+              <span className="text-xs uppercase tracking-widest text-green-700 font-bold mb-1">Most Total Wins</span>
+              <div className="flex items-center justify-center gap-2">
+                <div className="text-xl md:text-2xl font-bold text-green-800 leading-tight">
+                  {mostWinsPlayer?.name || '—'}
                 </div>
-              </CardContent>
-            </Card>
+                {mostWinsPlayer && (
+                  <span className="inline-flex items-center px-1.5 rounded-md border border-green-300 bg-green-100 text-green-800 font-bold text-lg md:text-xl leading-tight">
+                    {mostWinsPlayer.wins}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Most Total Losses (All-Time) */}
+            <div className="bg-rose-50 rounded-lg p-3 shadow-sm border border-rose-100 flex flex-col items-center justify-center text-center">
+              <span className="text-xs uppercase tracking-widest text-rose-700 font-bold mb-1">Most Total Losses</span>
+              <div className="flex items-center justify-center gap-2">
+                <div className="text-xl md:text-2xl font-bold text-rose-800 leading-tight">
+                  {mostLossesPlayer?.name || '—'}
+                </div>
+                {mostLossesPlayer && (
+                  <span className="inline-flex items-center px-1.5 rounded-md border border-rose-300 bg-rose-100 text-rose-800 font-bold text-lg md:text-xl leading-tight">
+                    {mostLossesPlayer.losses}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Most Total Pushes (All-Time) */}
+            <div className="bg-amber-50 rounded-lg p-3 shadow-sm border border-amber-100 flex flex-col items-center justify-center text-center">
+              <span className="text-xs uppercase tracking-widest text-amber-700 font-bold mb-1">Most Total Pushes</span>
+              <div className="flex items-center justify-center gap-2">
+                <div className="text-xl md:text-2xl font-bold text-amber-800 leading-tight">
+                  {mostPushesPlayer?.name || '—'}
+                </div>
+                {mostPushesPlayer && (
+                  <span className="inline-flex items-center px-1.5 rounded-md border border-amber-300 bg-amber-100 text-amber-800 font-bold text-lg md:text-xl leading-tight">
+                    {mostPushesPlayer.pushes}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Longest Push Streak (All-Time) */}
+            <div className="bg-amber-50 rounded-lg p-3 shadow-sm border border-amber-100 flex flex-col items-center justify-center text-center">
+              <span className="text-xs uppercase tracking-widest text-amber-700 font-bold mb-1">Longest Push Streak</span>
+              <div className="flex items-center justify-center gap-2">
+                <div className="text-xl md:text-2xl font-bold text-amber-800 leading-tight">
+                  {stats.longestPushStreak?.player || '—'}
+                </div>
+                {stats.longestPushStreak && stats.longestPushStreak.length > 0 && (
+                  <span className="inline-flex items-center px-1.5 rounded-md border border-amber-300 bg-amber-100 text-amber-800 font-bold text-lg md:text-xl leading-tight">
+                    P{stats.longestPushStreak.length}
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
         </div>
+        )}
       </div>
     </Layout>
   );

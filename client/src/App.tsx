@@ -9,7 +9,6 @@ import Picks from "@/pages/Picks";
 import Ticket from "@/pages/Ticket";
 import Papermetrics from "@/pages/Papermetrics";
 import Rules from "@/pages/Rules";
-import Admin from "@/pages/Admin";
 
 function Router() {
   return (
@@ -19,7 +18,6 @@ function Router() {
       <Route path="/ticket" component={Ticket} />
       <Route path="/papermetrics" component={Papermetrics} />
       <Route path="/rules" component={Rules} />
-      <Route path="/admin" component={Admin} />
       <Route component={NotFound} />
     </Switch>
   );

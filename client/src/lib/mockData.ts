@@ -16,15 +16,32 @@ export interface Pick {
   week: number;
   playerId: number;
   team: string;
+  resolvedTeam?: string; // The full resolved game/match name from ESPN
   odds: string;
   amount: number;
   result: 'Win' | 'Loss' | 'Push' | 'Pending';
   isTail: boolean;
   isReverseTail: boolean;
+  isReverseTailed?: boolean; // When this pick is offset by a reverse tail
   finalScore?: string;
   tailingPlayerId?: number; // If tailing someone
   startTime?: string;
   tvChannel?: string;
+  // Live game data from ESPN
+  gameStatus?: 'scheduled' | 'live' | 'final';
+  gameDate?: string;
+  gameDateFormatted?: string;
+  homeScore?: number;
+  awayScore?: number;
+  homeTeam?: string;
+  awayTeam?: string;
+  homeAbbrev?: string;
+  awayAbbrev?: string;
+  statusDetail?: string;
+  broadcasts?: string[];
+  gameSpread?: number; // The spread from ESPN (absolute value)
+  gameOverUnder?: number; // The over/under total from ESPN
+  favoriteTeam?: string; // Which team is favored (abbreviation like "OSU")
 }
 
 // Mock Data Generator

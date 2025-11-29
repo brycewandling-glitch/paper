@@ -17,7 +17,6 @@ export function Layout({ children }: LayoutProps) {
     { href: '/ticket', label: 'Bets', icon: Ticket },
     { href: '/papermetrics', label: 'Papermetrics', icon: BarChart3 },
     { href: '/rules', label: 'Rules', icon: BookOpen },
-    { href: '/admin', label: 'Admin', icon: ShieldCheck },
   ];
 
   return (
@@ -28,7 +27,7 @@ export function Layout({ children }: LayoutProps) {
           {/* Logo */}
           <div className="flex items-center gap-5">
             <img src="/logo.png" alt="Investment Club Logo" className="h-6 w-6 object-contain" />
-            <span className="font-heading font-bold text-xl hidden sm:inline-block tracking-tight text-primary">
+            <span className="font-heading font-bold text-xl hidden lg:inline-block tracking-tight text-primary">
               Investment Club
             </span>
           </div>

@@ -1,53 +1,224 @@
 import React, { useState } from 'react';
 import { Layout } from '@/components/Layout';
-import { getPlayers, getPicksByWeek, getSeasonInfo, type Pick } from '@/lib/mockData';
+import { getSeasonInfo, type Pick } from '@/lib/mockData';
+import { fetchSeasonPlayers, fetchPicksByWeek, fetchSeasonWeekCount, fetchGameDetails } from '@/lib/api';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { Trophy, Medal, Ticket as TicketIcon } from 'lucide-react';
 
 export default function Ticket() {
-  const { week: currentWeek } = getSeasonInfo();
-  const [selectedWeek, setSelectedWeek] = useState(currentWeek);
-  const weeks = Array.from({ length: currentWeek }, (_, i) => i + 1);
+  const { week: currentWeek, season: currentSeason } = getSeasonInfo();
+  const [selectedWeek, setSelectedWeek] = useState<number | null>(null);
+  const [weeks, setWeeks] = React.useState<number[]>([]);
 
-  const players = getPlayers();
-  const picks = getPicksByWeek(selectedWeek);
+  const [players, setPlayers] = React.useState<Array<any>>([]);
+  const [picks, setPicks] = React.useState<Pick[]>([]);
+  const [loading, setLoading] = React.useState(false);
 
-  // Group picks by division
-  const legendsPicks = picks.filter(pick => {
-    const player = players.find(p => p.id === pick.playerId);
-    return player?.division === 'Legends';
+  // Initialize with the most recent week
+  React.useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const seasonName = `Season ${currentSeason}`;
+        const wkCount = await fetchSeasonWeekCount(seasonName);
+        if (!mounted) return;
+        const totalWeeks = wkCount > 0 ? wkCount : currentWeek;
+        const weeksList = Array.from({ length: totalWeeks }, (_, i) => i + 1);
+        setWeeks(weeksList);
+        // Default to the most recent week
+        setSelectedWeek(totalWeeks);
+      } catch (err) {
+        console.error('Failed to fetch week count', err);
+        setWeeks(Array.from({ length: currentWeek }, (_, i) => i + 1));
+        setSelectedWeek(currentWeek);
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
+
+  React.useEffect(() => {
+    if (selectedWeek === null) return;
+    
+    let mounted = true;
+    setLoading(true);
+    // Clear previous picks immediately to avoid showing stale data while loading
+    setPicks([]);
+    (async () => {
+      try {
+        const seasonName = `Season ${currentSeason}`;
+        const pls = await fetchSeasonPlayers(seasonName);
+        if (!mounted) return;
+        setPlayers(pls);
+
+        const wkPicks = await fetchPicksByWeek(seasonName, selectedWeek);
+        if (!mounted) return;
+        
+        // Fetch game details for picks with resolved teams
+        const picksWithGameDetails = await Promise.all(
+          wkPicks.map(async (pick) => {
+            if (pick.resolvedTeam && !pick.resolvedTeam.startsWith('Tail') && !pick.resolvedTeam.startsWith('Reverse Tail')) {
+              try {
+                // Detect sport from resolved text
+                const resolvedLower = pick.resolvedTeam.toLowerCase();
+                
+                // Check for college keywords FIRST (before NFL teams that share nicknames)
+                const collegeKeywords = [
+                  'baylor', 'houston cougars', 'cougars', 'longhorns', 'aggies', 'sooners', 'seminoles',
+                  'crimson tide', 'tide', 'bulldogs', 'volunteers', 'gators', 'wolverines', 'buckeyes',
+                  'tigers', 'wildcats', 'fighting illini', 'illini', 'hawkeyes', 'badgers', 'spartans',
+                  'nittany lions', 'hoosiers', 'boilermakers', 'cornhuskers', 'jayhawks', 'cyclones',
+                  'mountaineers', 'horned frogs', 'red raiders', 'gamecocks', 'commodores', 'rebels',
+                  'razorbacks', 'huskies', 'ducks', 'beavers', 'bruins', 'trojans', 'sun devils',
+                  'buffaloes', 'utes', 'cougar', 'golden bears', 'cardinal', 'fighting irish',
+                  'tar heels', 'cavaliers', 'hokies', 'demon deacons', 'blue devils', 'wolfpack',
+                  'yellow jackets', 'hurricanes', 'orange', 'owls', 'mustangs', 'bearcats',
+                  'memphis', 'tulane', 'tulsa', 'smu', 'ucf', 'usf', 'cincinnati', 'louisville',
+                  'pitt', 'boston college', 'syracuse', 'duke', 'wake forest', 'virginia tech',
+                  'georgia tech', 'miami hurricanes', 'florida state', 'nc state', 'northwestern',
+                  'purdue', 'indiana', 'maryland', 'rutgers', 'minnesota', 'iowa', 'wisconsin',
+                  'illinois', 'nebraska', 'kansas', 'kansas state', 'oklahoma state', 'west virginia',
+                  'tcu', 'texas tech', 'colorado', 'utah', 'arizona state', 'ucla', 'usc', 'cal',
+                  'stanford', 'washington state', 'oregon state', 'auburn', 'alabama'
+                ];
+                
+                const nflTeams = ['cardinals', 'falcons', 'ravens', 'bills', 'panthers', 'bears', 'bengals', 
+                  'browns', 'cowboys', 'broncos', 'lions', 'packers', 'texans', 'colts', 'jaguars', 
+                  'chiefs', 'raiders', 'chargers', 'rams', 'dolphins', 'vikings', 'patriots', 'saints',
+                  'giants', 'jets', 'eagles', 'steelers', '49ers', 'seahawks', 'buccaneers', 'titans', 'commanders'];
+                
+                let sport = 'ncaaf'; // Default to college football
+                
+                // Check college first to avoid "Baylor Bears" matching NFL "Bears"
+                const isCollege = collegeKeywords.some(keyword => resolvedLower.includes(keyword));
+                if (!isCollege && nflTeams.some(team => resolvedLower.includes(team))) {
+                  sport = 'nfl';
+                }
+                
+                const gameDetails = await fetchGameDetails(pick.resolvedTeam, sport);
+                if (gameDetails) {
+                  return {
+                    ...pick,
+                    gameStatus: gameDetails.status,
+                    gameDate: gameDetails.gameDate,
+                    gameDateFormatted: gameDetails.gameDateFormatted,
+                    homeScore: gameDetails.homeScore,
+                    awayScore: gameDetails.awayScore,
+                    homeTeam: gameDetails.homeTeam,
+                    awayTeam: gameDetails.awayTeam,
+                    homeAbbrev: gameDetails.homeAbbrev,
+                    awayAbbrev: gameDetails.awayAbbrev,
+                    statusDetail: gameDetails.statusDetail,
+                    broadcasts: gameDetails.broadcasts,
+                    tvChannel: gameDetails.broadcasts?.[0] || pick.tvChannel,
+                    gameSpread: gameDetails.spread,
+                    gameOverUnder: gameDetails.overUnder,
+                    favoriteTeam: gameDetails.favoriteTeam,
+                  };
+                }
+              } catch (e) {
+                console.error('Failed to fetch game details for pick:', e);
+              }
+            }
+            return pick;
+          })
+        );
+        
+        if (!mounted) return;
+        setPicks(picksWithGameDetails);
+      } catch (err) {
+        console.error('Failed to load picks', err);
+        if (mounted) {
+          setPlayers([]);
+          setPicks([]);
+        }
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [selectedWeek]);
+
+  // Group picks by division — determine division from the week's description when present
+  const resolvePickDivision = (pick: Pick, player: any) => {
+    const desc = String(pick.team ?? '').toLowerCase();
+    if (desc.includes('(legends)')) return 'Legends';
+    if (desc.includes('(leaders)')) return 'Leaders';
+    return player?.division ?? 'Leaders';
+  };
+
+  // Filter out reverse tail picks from bet slip (they're for tracking/standings only)
+  // Reverse tail picks offset other bets but are shown as crossed off
+  const picksBetSlip = picks.filter(pick => !pick.isReverseTail);
+  
+  // Apply reverse tail cancellation logic
+  // For each reverse tail, find the matching pick and mark it as reverse tailed
+  const reverseTails = picks.filter(pick => pick.isReverseTail);
+  const reverseTailedPickIds = new Set<number>();
+  
+  reverseTails.forEach(reverseTail => {
+    // Find picks from the tailed player that match this reverse tail
+    const tailedPlayerId = reverseTail.tailingPlayerId;
+    if (!tailedPlayerId) return;
+    
+    // Find a matching pick from the tailed player to mark as reverse tailed
+    const matchingPick = picksBetSlip.find(p => 
+      p.playerId === tailedPlayerId && 
+      !reverseTailedPickIds.has(p.id as any)
+    );
+    
+    if (matchingPick) {
+      reverseTailedPickIds.add(matchingPick.id as any);
+    }
   });
 
-  const leadersPicks = picks.filter(pick => {
+  // Keep all picks but mark which ones are reverse tailed (shown as crossed off)
+  const picksAfterCancellation = picksBetSlip.map(pick => ({
+    ...pick,
+    isReverseTailed: reverseTailedPickIds.has(pick.id as any)
+  }));
+
+  const legendsPicks = picksAfterCancellation.filter(pick => {
     const player = players.find(p => p.id === pick.playerId);
-    return player?.division === 'Leaders';
+    return resolvePickDivision(pick, player) === 'Legends';
+  });
+
+  const leadersPicks = picksAfterCancellation.filter(pick => {
+    const player = players.find(p => p.id === pick.playerId);
+    return resolvePickDivision(pick, player) === 'Leaders';
   });
 
   const renderPickCard = (pick: Pick) => {
     const player = players.find(p => p.id === pick.playerId);
     if (!player) return null;
+    const pickDivision = ((): 'Legends' | 'Leaders' => {
+      const desc = String(pick.team ?? '').toLowerCase();
+      if (desc.includes('(legends)')) return 'Legends';
+      if (desc.includes('(leaders)')) return 'Leaders';
+      return player.division ?? 'Leaders';
+    })();
 
     return (
       <Card 
         key={pick.id} 
         className={cn(
           "relative overflow-hidden transition-all hover:shadow-md border group",
+          pick.isReverseTailed ? "bg-gray-100/50 border-gray-300 opacity-60" :
           pick.result === 'Win' ? "bg-emerald-50/50 border-emerald-200" : 
           pick.result === 'Loss' ? "bg-rose-50/50 border-rose-200" : 
           pick.result === 'Push' ? "bg-amber-50/50 border-amber-200" :
           "bg-white border-border"
         )}
       >
-        {/* Accent Bar - Only show if pending */}
-        {pick.result === 'Pending' && (
+        {/* Accent Bar - Only show if pending and not reverse tailed */}
+        {pick.result === 'Pending' && !pick.isReverseTailed && (
           <div className={cn(
             "absolute left-0 top-0 bottom-0 w-1 group-hover:w-1.5 transition-all",
-            player.division === 'Leaders' ? "bg-muted-foreground/30" : "bg-primary"
+            pickDivision === 'Leaders' ? "bg-muted-foreground/30" : "bg-primary"
           )}></div>
         )}
         
-        <CardContent className="p-3 pl-5">
+        <CardContent className={cn("p-3 pl-5", pick.isReverseTailed && "opacity-50 line-through")}>
           
           <div className="flex justify-between items-center mb-2">
             <div className="flex items-center gap-2">
@@ -57,59 +228,168 @@ export default function Ticket() {
                   Tailing
                 </div>
               )}
+              {pick.isReverseTailed && (
+                <div className="bg-red-100 text-red-700 text-[9px] px-1.5 py-0.5 rounded uppercase font-bold tracking-wider border border-red-300">
+                  Reverse Tailed
+                </div>
+              )}
             </div>
-            <div className="px-2 py-0.5 rounded border border-primary text-primary font-bold text-xs bg-white">
-              ${pick.amount}
-            </div>
+            {pick.team && (
+              <div className={cn("px-2 py-0.5 rounded border text-primary font-bold text-xs bg-white", pick.isReverseTailed ? "border-gray-300 text-gray-500" : "border-primary")}>
+                ${pick.amount}
+              </div>
+            )}
           </div>
           
           <div className="space-y-1.5">
             <div className="flex justify-between items-start">
-                <div className="font-semibold text-sm text-foreground/90 leading-tight">
-                  {pick.team} <span className="text-muted-foreground font-normal ml-1 text-xs">{pick.odds}</span>
-                </div>
+                    <div className={cn("font-semibold text-sm text-foreground/90 leading-tight", pick.isReverseTailed && "line-through text-gray-400")}>
+                      {(() => {
+                        // If we have a resolved team, extract just the team name (before @) that matches their pick
+                        if (pick.resolvedTeam) {
+                          // Check if this is an over/under bet by looking at the parentheses part
+                          const ouMatch = pick.resolvedTeam.match(/\((Over|Under)\s*(\d+\.?\d*)?\)/i);
+                          if (ouMatch) {
+                            // This is an over/under bet - extract the game matchup and over/under info
+                            const withoutParens = pick.resolvedTeam.replace(/\s*\([^)]*\)\s*$/, '').trim();
+                            const ouType = ouMatch[1]; // "Over" or "Under"
+                            const total = ouMatch[2] || (pick.gameOverUnder ?? ''); // Use extracted total or game total
+                            return `${withoutParens} ${ouType}${total ? ` ${total}` : ''}`;
+                          }
+                          
+                          // Not an over/under bet - handle as spread bet
+                          // Remove parenthesis part: "Away @ Home (pick details)" -> "Away @ Home"
+                          const withoutParens = pick.resolvedTeam.replace(/\s*\([^)]*\)\s*$/, '').trim();
+                          // Extract the team name they bet on from the resolved text
+                          // The resolved format is "Away Team @ Home Team"
+                          const teams = withoutParens.split('@').map(t => t.trim());
+                          let teamName = withoutParens;
+                          let isPickedTeamHome = false;
+                          
+                          if (teams.length === 2) {
+                            // Check which team matches the original pick
+                            const originalPick = String(pick.team ?? '').toLowerCase().replace(/\(?\s*(legends|leaders)\s*\)?/gi, '').replace(/[+-]?\d+\.?\d*/g, '').trim();
+                            const awayLower = teams[0].toLowerCase();
+                            const homeLower = teams[1].toLowerCase();
+                            
+                            // Return the full team name that matches
+                            if (awayLower.includes(originalPick) || originalPick.split(' ').some(w => w.length > 2 && awayLower.includes(w))) {
+                              teamName = teams[0];
+                              isPickedTeamHome = false;
+                            } else if (homeLower.includes(originalPick) || originalPick.split(' ').some(w => w.length > 2 && homeLower.includes(w))) {
+                              teamName = teams[1];
+                              isPickedTeamHome = true;
+                            }
+                          }
+                          
+                          // Calculate spread for the picked team using favoriteTeam
+                          let spreadDisplay = '';
+                          if (pick.gameSpread !== undefined && pick.gameSpread !== null && pick.favoriteTeam) {
+                            // favoriteTeam is the abbreviation (e.g., "OSU", "MICH")
+                            // gameSpread may be negative from ESPN - we need the absolute value
+                            const absoluteSpread = Math.abs(pick.gameSpread);
+                            // If picked team matches favorite, they get negative spread
+                            // If picked team is underdog, they get positive spread
+                            const pickedAbbrev = isPickedTeamHome ? pick.homeAbbrev : pick.awayAbbrev;
+                            const favoriteAbbrev = pick.favoriteTeam.toUpperCase();
+                            
+                            // Check if the picked team is the favorite by comparing abbreviations
+                            const isPickedTeamFavorite = pickedAbbrev?.toUpperCase() === favoriteAbbrev;
+                            
+                            if (isPickedTeamFavorite) {
+                              // Picked team is favorite - negative spread
+                              spreadDisplay = ` -${absoluteSpread}`;
+                            } else {
+                              // Picked team is underdog - positive spread
+                              spreadDisplay = ` +${absoluteSpread}`;
+                            }
+                          } else {
+                            // Try to extract spread from original pick if ESPN didn't have it
+                            const originalPickText = String(pick.team ?? '');
+                            const spreadMatch = originalPickText.match(/([+-]?\d+\.?\d*)\s*$/);
+                            if (spreadMatch) {
+                              const spread = parseFloat(spreadMatch[1]);
+                              spreadDisplay = spread > 0 ? ` +${spread}` : ` ${spread}`;
+                            }
+                          }
+                          
+                          return teamName + spreadDisplay;
+                        }
+                        // Fallback to original behavior: Remove any inline division tags
+                        const raw = String(pick.team ?? '');
+                        const cleaned = raw.replace(/\(?\s*(legends|leaders|nfl|nba|mlb|nhl|ncaaf|ncaab|cfb|cbb)\s*\)?/gi, '').trim();
+                        return cleaned || raw;
+                      })()} <span className={cn("text-muted-foreground font-normal ml-1 text-xs", pick.isReverseTailed && "text-gray-400")}>{pick.odds}</span>
+                    </div>
                 
                 {pick.startTime && (
-                  <div className="text-[10px] font-medium text-muted-foreground flex gap-1 items-center whitespace-nowrap ml-2">
+                  <div className={cn("text-[10px] font-medium text-muted-foreground flex gap-1 items-center whitespace-nowrap ml-2", pick.isReverseTailed && "text-gray-400")}>
                     <span>{pick.startTime}</span>
-                    {pick.tvChannel && <span className="border-l pl-1 border-border text-muted-foreground/70">{pick.tvChannel}</span>}
+                    {pick.tvChannel && <span className={cn("border-l pl-1 border-border text-muted-foreground/70", pick.isReverseTailed && "border-gray-300 text-gray-400")}>{pick.tvChannel}</span>}
                   </div>
                 )}
             </div>
             
-            <div className="mt-2 pt-2 border-t border-dashed flex justify-between items-center min-h-[1.5rem]">
-              {/* Score / Status Area */}
-              <div className="flex items-center">
-                {pick.finalScore ? (
-                   <div className="text-[10px] font-mono text-muted-foreground flex items-center gap-1">
-                    <span>{pick.result === 'Pending' ? 'Active' : 'Final'}:</span>
-                    <span className={cn("font-semibold", pick.result === 'Pending' ? "text-primary" : "text-foreground")}>
-                      {pick.finalScore}
-                    </span>
-                  </div>
-                ) : (
-                   <span className="text-[10px] font-bold text-muted-foreground/50 uppercase tracking-wide">
-                     Pending
-                   </span>
-                )}
-              </div>
+            <div className="mt-2 pt-2 border-t border-dashed flex flex-col gap-1 min-h-[2.5rem]">
+              {pick.isTail ? (
+                <div className="h-8" aria-hidden="true"></div>
+              ) : (
+                <>
+                  {/* Game Matchup Line */}
+                  {pick.resolvedTeam && (
+                    <div className="text-[10px] text-muted-foreground">
+                      {pick.resolvedTeam.replace(/\s*\([^)]*\)\s*$/, '')}
+                    </div>
+                  )}
+                  
+                  {/* Score or Start Time Line */}
+                  <div className="flex justify-between items-center">
+                    <div className="flex items-center flex-1 min-w-0">
+                      {/* Show score if game is live or final */}
+                      {(pick.gameStatus === 'live' || pick.gameStatus === 'final') && pick.homeScore !== undefined && pick.awayScore !== undefined ? (
+                        <div className="text-[10px] font-mono text-muted-foreground flex items-center gap-1">
+                          <span className={pick.gameStatus === 'live' ? "text-green-600 font-semibold" : "text-muted-foreground"}>
+                            {pick.gameStatus === 'live' ? '🔴 LIVE' : 'Final'}:
+                          </span>
+                          <span className={cn("font-semibold", pick.gameStatus === 'live' ? "text-primary" : "text-foreground")}>
+                            {pick.awayTeam?.split(' ').pop()} {pick.awayScore} - {pick.homeTeam?.split(' ').pop()} {pick.homeScore}
+                          </span>
+                        </div>
+                      ) : pick.gameStatus === 'scheduled' && pick.gameDateFormatted ? (
+                        /* Show start time if game hasn't started */
+                        <div className="text-[10px] text-muted-foreground flex items-center gap-2">
+                          <span>📅 {pick.gameDateFormatted}</span>
+                          {pick.broadcasts && pick.broadcasts.length > 0 && (
+                            <span className="border-l pl-2 border-border">📺 {pick.broadcasts[0]}</span>
+                          )}
+                        </div>
+                      ) : pick.finalScore ? (
+                        <div className="text-[10px] font-mono text-muted-foreground flex items-center gap-1">
+                          <span>{pick.result === 'Pending' ? 'Active' : 'Final'}:</span>
+                          <span className={cn("font-semibold", pick.result === 'Pending' ? "text-primary" : "text-foreground")}>
+                            {pick.finalScore}
+                          </span>
+                        </div>
+                      ) : !pick.resolvedTeam ? (
+                        <span className="text-[10px] font-bold text-muted-foreground/50 uppercase tracking-wide">
+                          Pending
+                        </span>
+                      ) : null}
+                    </div>
 
-              {/* Win/Loss Badge - Bottom Right */}
-              {pick.result !== 'Pending' && (
-                <span className={cn(
-                  "font-bold text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide border ml-auto",
-                  pick.result === 'Win' ? "bg-emerald-100 text-emerald-800 border-emerald-200" : 
-                  pick.result === 'Loss' ? "bg-rose-100 text-rose-800 border-rose-200" : "bg-gray-100 text-gray-800 border-gray-200"
-                )}>
-                  {pick.result}
-                </span>
+                    {/* Win/Loss Badge - Bottom Right */}
+                    {pick.result !== 'Pending' && (
+                      <span className={cn(
+                        "font-bold text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide border ml-auto",
+                        pick.result === 'Win' ? "bg-emerald-100 text-emerald-800 border-emerald-200" : 
+                        pick.result === 'Loss' ? "bg-rose-100 text-rose-800 border-rose-200" : "bg-gray-100 text-gray-800 border-gray-200"
+                      )}>
+                        {pick.result}
+                      </span>
+                    )}
+                  </div>
+                </>
               )}
-              
-              {/* TV Channel for completed/active games if needed, but request said "right after game time and date" which implies pending state mostly or header area. 
-                  The user said: "the tv channel should go right after the game time and date. on the right side right above the dashed line."
-                  This is handled in the block above for pending games. For active/final, usually time isn't shown as prominently or replaced by score. 
-                  Let's stick to the pending block modification I made above.
-              */}
             </div>
           </div>
         </CardContent>
@@ -164,7 +444,13 @@ export default function Ticket() {
         </div>
         
         <div className={cn("p-6", result ? "bg-transparent" : "bg-slate-50/50")}>
-             {picks.length > 0 ? (
+             {loading ? (
+               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                 {Array.from({ length: 6 }).map((_, i) => (
+                   <div key={i} className="h-28 rounded border border-border bg-white p-3 animate-pulse" />
+                 ))}
+               </div>
+             ) : picks.length > 0 ? (
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {picks.map(renderPickCard)}
                 </div>
@@ -203,14 +489,15 @@ export default function Ticket() {
                 key={w}
                 onClick={() => setSelectedWeek(w)}
                 className={cn(
-                  "px-1 py-2 md:px-4 rounded-md text-[10px] md:text-sm font-medium transition-all border whitespace-nowrap flex items-center justify-center",
+                  // fixed width so single-digit weeks match two-digit buttons, centered text
+                  "w-12 md:w-20 h-8 md:h-9 rounded-md text-[10px] md:text-sm font-medium transition-all border flex items-center justify-center text-center",
                   selectedWeek === w
                     ? "bg-primary text-white border-primary"
                     : "bg-transparent text-muted-foreground border-border hover:border-primary/50 hover:text-foreground"
                 )}
               >
-                <span className="md:hidden">Wk #{w}</span>
-                <span className="hidden md:inline">Week #{w}</span>
+                <span className="md:hidden">Wk {w}</span>
+                <span className="hidden md:inline">Week {w}</span>
               </button>
             ))}
           </div>

@@ -1,18 +1,36 @@
 import { Layout } from '@/components/Layout';
-import { getPlayers, getSeasonInfo } from '@/lib/mockData';
+import { getSeasonInfo } from '@/lib/mockData';
+import { fetchSeasonData } from '@/lib/api';
+import { useQuery } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 
 import { Trophy } from 'lucide-react';
 
 export default function Standings() {
-  const players = getPlayers().sort((a, b) => b.seasonBetTotal - a.seasonBetTotal);
+  // Fetch players for the current season from Google Sheets
+  const { season: currentSeason } = getSeasonInfo();
+  const seasonName = `Season ${currentSeason}`;
+  const { data: seasonData, isLoading } = useQuery({
+    queryKey: ['seasonPlayers', seasonName],
+    queryFn: () => fetchSeasonData(seasonName),
+  });
+  const players = seasonData?.players || [];
+  const stats = seasonData?.stats || { parlaysHit: 0, overallWinPercentage: 0, totalWeeks: 0, seasonWins: 0, longestWinStreak: { player: '', length: 0 }, longestLoseStreak: { player: '', length: 0 }, longestPushStreak: { player: '', length: 0 } };
   const sortedPlayers = [...players].sort((a, b) => {
     if (b.winPercentage !== a.winPercentage) return b.winPercentage - a.winPercentage;
     return b.seasonBetTotal - a.seasonBetTotal;
   });
+  const season = currentSeason;
+  // Current week is the next week after the last completed week
+  const currentWeek = stats.totalWeeks + 1;
 
-  const { season, week } = getSeasonInfo();
-  const totalWins = sortedPlayers.reduce((acc, p) => acc + p.wins, 0);
+  if (isLoading) {
+    return (
+      <Layout>
+        <div className="max-w-5xl mx-auto p-6">Loading Season 1 data...</div>
+      </Layout>
+    );
+  }
 
   return (
     <Layout>
@@ -33,7 +51,7 @@ export default function Standings() {
           
           <div className="bg-primary/5 border border-primary/20 rounded-md px-5 py-2.5 md:self-center flex flex-row md:flex-col justify-start md:justify-center items-center md:items-end gap-3 md:gap-0">
              <span className="font-bold text-foreground/80 text-xs tracking-wider leading-tight md:mb-0.5">Season {season}</span>
-             <span className="text-muted-foreground font-medium text-xs tracking-wider leading-tight">Week #{week}</span>
+             <span className="text-muted-foreground font-medium text-xs tracking-wider leading-tight">Week #{currentWeek}</span>
           </div>
         </div>
 
@@ -94,8 +112,10 @@ export default function Standings() {
                     <td className="px-1 md:px-4 py-3 text-center">
                       <span className={cn(
                         "inline-flex items-center justify-center w-6 h-5 md:w-8 md:h-6 rounded text-[10px] md:text-xs font-bold border",
-                        player.currentStreak.startsWith('W') 
-                          ? "bg-emerald-100 text-emerald-700 border-emerald-200" 
+                        player.currentStreak.startsWith('W')
+                          ? "bg-emerald-100 text-emerald-700 border-emerald-200"
+                          : player.currentStreak.startsWith('P')
+                          ? "bg-amber-100 text-amber-700 border-amber-200"
                           : "bg-rose-100 text-rose-700 border-rose-200"
                       )}>
                         {player.currentStreak}
@@ -120,14 +140,44 @@ export default function Standings() {
         </div>
 
         {/* Season Stats Footer */}
-        <div className="grid grid-cols-2 gap-3 md:gap-6">
-          <div className="bg-white rounded-lg p-4 shadow-sm border border-border flex flex-col items-center justify-center">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-6 justify-center">
+          <div className="lg:col-span-2 bg-white rounded-lg p-4 shadow-sm border border-border flex flex-col items-center justify-center">
             <span className="text-xs uppercase tracking-widest text-muted-foreground font-bold mb-1">Season Bets</span>
-            <span className="text-3xl font-bold text-foreground">{sortedPlayers.length * 5}</span>
+            <span className="text-3xl font-bold text-foreground">{stats.totalWeeks * 2}</span>
           </div>
-          <div className="bg-emerald-50 rounded-lg p-4 shadow-sm border border-emerald-100 flex flex-col items-center justify-center">
+          <div className="lg:col-span-2 bg-emerald-50 rounded-lg p-4 shadow-sm border border-emerald-100 flex flex-col items-center justify-center">
             <span className="text-xs uppercase tracking-widest text-emerald-700 font-bold mb-1">Season Wins</span>
-            <span className="text-3xl font-bold text-emerald-800">{totalWins}</span>
+            <span className="text-3xl font-bold text-emerald-800">{stats.seasonWins}</span>
+          </div>
+        </div>
+
+        {/* Longest Streaks */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-6 mt-3 md:mt-6 justify-center">
+          <div className="lg:col-span-2 bg-green-50 rounded-lg p-3 shadow-sm border border-green-100 flex flex-col items-center justify-center text-center">
+            <span className="text-xs uppercase tracking-widest text-green-700 font-bold mb-1">Longest Win Streak</span>
+            <div className="flex items-center justify-center gap-2">
+              <div className="text-xl md:text-2xl font-bold text-green-800 leading-tight">
+                {stats.longestWinStreak.player || '—'}
+              </div>
+              {stats.longestWinStreak.length > 0 && (
+                <span className="inline-flex items-center px-1.5 rounded-md border border-green-300 bg-green-100 text-green-800 font-bold text-lg md:text-xl leading-tight">
+                  W{stats.longestWinStreak.length}
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="lg:col-span-2 bg-rose-50 rounded-lg p-3 shadow-sm border border-rose-100 flex flex-col items-center justify-center text-center">
+            <span className="text-xs uppercase tracking-widest text-rose-700 font-bold mb-1">Longest Lose Streak</span>
+            <div className="flex items-center justify-center gap-2">
+              <div className="text-xl md:text-2xl font-bold text-rose-800 leading-tight">
+                {stats.longestLoseStreak.player || '—'}
+              </div>
+              {stats.longestLoseStreak.length > 0 && (
+                <span className="inline-flex items-center px-1.5 rounded-md border border-rose-300 bg-rose-100 text-rose-800 font-bold text-lg md:text-xl leading-tight">
+                  L{stats.longestLoseStreak.length}
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </div>
