@@ -131,6 +131,19 @@ export async function fetchSeasonPlayers(sheetName = 'Season 1', winPctIncludePu
     }
   }
 
+  const totalsRowByLabel = new Map<string, WeeklyRow>();
+  for (const row of rows) {
+    const label = String(row['TOTALS'] ?? '').trim().toLowerCase();
+    if (label) {
+      totalsRowByLabel.set(label, row);
+    }
+  }
+
+  const totalWinsRow = totalsRowByLabel.get('total wins');
+  const totalLossesRow = totalsRowByLabel.get('total losses');
+  const totalPushesRow = totalsRowByLabel.get('total pushes');
+  const winPctRow = totalsRowByLabel.get('win percentage');
+
   // Build player definitions by scanning headers for '<Name> Bet Amount' pattern
   const playersDefs: {
     name: string;
@@ -262,6 +275,35 @@ export async function fetchSeasonPlayers(sheetName = 'Season 1', winPctIncludePu
         currentStreak: streak
       } as Player;
     });
+
+  // Fall back to totals rows when weekly win/loss/push columns contain errors (#NAME?, etc.)
+  if (totalWinsRow || totalLossesRow || totalPushesRow || winPctRow) {
+    for (const player of playersAgg) {
+      const totalsCol = totalsColumnByPlayer.get(player.name);
+      if (!totalsCol) continue;
+
+      const winsFromTotals = totalWinsRow ? parseNumber(totalWinsRow[totalsCol], NaN) : NaN;
+      const lossesFromTotals = totalLossesRow ? parseNumber(totalLossesRow[totalsCol], NaN) : NaN;
+      const pushesFromTotals = totalPushesRow ? parseNumber(totalPushesRow[totalsCol], NaN) : NaN;
+      const pctFromTotals = winPctRow ? parseNumber(winPctRow[totalsCol], NaN) : NaN;
+
+      const hasOverride = !Number.isNaN(winsFromTotals) || !Number.isNaN(lossesFromTotals) || !Number.isNaN(pushesFromTotals);
+      if (!hasOverride) continue;
+
+      if (!Number.isNaN(winsFromTotals)) player.wins = winsFromTotals;
+      if (!Number.isNaN(lossesFromTotals)) player.losses = lossesFromTotals;
+      if (!Number.isNaN(pushesFromTotals)) player.pushes = pushesFromTotals;
+
+      const denom = player.wins + player.losses + (winPctIncludePushes ? player.pushes : 0);
+      if (!Number.isNaN(pctFromTotals)) {
+        player.winPercentage = pctFromTotals;
+      } else if (denom > 0) {
+        player.winPercentage = Math.round((player.wins / denom) * 1000) / 10;
+      }
+
+      player.seasonRecord = `${player.wins}-${player.losses}-${player.pushes}`;
+    }
+  }
 
   // Count completed weeks (rows with at least one recorded result) to know when promotion rules apply
   let weeksWithResults = 0;
