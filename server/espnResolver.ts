@@ -399,16 +399,55 @@ function parsePickText(pickText: string): { team: string; spread?: number; overU
     .replace(/\s*\((nfl|nba|mlb|nhl|ncaaf|cfb|ncaab|cbb)\)\s*/gi, '')
     .trim();
   
-  // Check for over/under - require word boundary to avoid matching 'u' in team names like "LSU"
-  // Match "over" or "under" as full words, or standalone "o"/"u" followed by a number
-  const ouMatch = text.match(/(.+?)\s+(?:(over|under)\s*(\d+\.?\d*)?|(o|u)\s*(\d+\.?\d+))\s*(?:[+-]\d+)?$/i);
-  if (ouMatch) {
-    const isOver = (ouMatch[2] || ouMatch[4] || '').toLowerCase().startsWith('o');
-    const total = ouMatch[3] || ouMatch[5];
+  // Check for over/under bets in multiple formats
+  // 1. Explicit totals: "Team Over 54.5"
+  const explicitTotalMatch = text.match(/(.+?)\s+(over|under)\s+(\d+\.?\d*)\s*(?:[+-]\d+)?$/i);
+  if (explicitTotalMatch) {
+    const [, primaryTeam, ouWord, total] = explicitTotalMatch;
     return {
-      team: ouMatch[1].trim(),
-      overUnder: total ? parseFloat(total) : undefined,
-      isOver
+      team: primaryTeam.trim(),
+      overUnder: parseFloat(total),
+      isOver: ouWord.toLowerCase().startsWith('o')
+    };
+  }
+
+  // 2. Team vs Team totals: "Houston over Baylor -110" or "OK/LSU Over"
+  const keywordMatch = text.match(/(.+?)\s+(over|under)\s+(.+)/i);
+  if (keywordMatch) {
+    const primaryTeam = keywordMatch[1].trim();
+    const ouWord = keywordMatch[2].toLowerCase();
+    let remainder = keywordMatch[3].trim();
+
+    // Remove trailing odds (e.g., -110)
+    const trailingOdds = remainder.match(/(.+?)\s+([+-]\d+\.?\d*)$/);
+    if (trailingOdds) {
+      remainder = trailingOdds[1].trim();
+    }
+
+    // If remainder is numeric, treat it as the total; otherwise treat it as the opponent/team
+    const numericMatch = remainder.match(/^(\d+\.?\d*)$/);
+    if (numericMatch) {
+      return {
+        team: primaryTeam,
+        overUnder: parseFloat(numericMatch[1]),
+        isOver: ouWord.startsWith('o')
+      };
+    }
+
+    if (remainder) {
+      const secondaryTeam = remainder.replace(/\s*\(.*\)$/,'').trim();
+      const combinedTeams = `${primaryTeam} / ${secondaryTeam}`;
+      return {
+        team: combinedTeams,
+        overUnder: undefined,
+        isOver: ouWord.startsWith('o')
+      };
+    }
+
+    return {
+      team: primaryTeam,
+      overUnder: undefined,
+      isOver: ouWord.startsWith('o')
     };
   }
   
@@ -515,11 +554,31 @@ function extractGameDetails(
     } else {
       resolvedText = `${resolvedText} (${ouType})`;
     }
-  } else if (parsedPick.spread !== undefined) {
-    const spreadStr = parsedPick.spread > 0 ? `+${parsedPick.spread}` : String(parsedPick.spread);
-    resolvedText = `${resolvedText} (${matchedTeam} ${spreadStr})`;
   } else {
-    resolvedText = `${resolvedText} (${matchedTeam})`;
+    // Determine which spread to display. Prefer the pick's explicit spread, otherwise derive from ESPN odds
+    let displaySpread: number | undefined = parsedPick.spread;
+
+    if (displaySpread === undefined && typeof spread === 'number' && favoriteTeam) {
+      const favoriteAbbrev = favoriteTeam.toUpperCase();
+      const matchedAbbrev = matchedTeam === homeTeam.displayName
+        ? homeTeam.abbreviation.toUpperCase()
+        : matchedTeam === awayTeam.displayName
+          ? awayTeam.abbreviation.toUpperCase()
+          : undefined;
+
+      if (matchedAbbrev) {
+        const absoluteSpread = Math.abs(spread);
+        const isFavorite = matchedAbbrev === favoriteAbbrev;
+        displaySpread = isFavorite ? -absoluteSpread : absoluteSpread;
+      }
+    }
+
+    if (displaySpread !== undefined) {
+      const spreadStr = displaySpread > 0 ? `+${displaySpread}` : String(displaySpread);
+      resolvedText = `${resolvedText} (${matchedTeam} ${spreadStr})`;
+    } else {
+      resolvedText = `${resolvedText} (${matchedTeam})`;
+    }
   }
 
   return {

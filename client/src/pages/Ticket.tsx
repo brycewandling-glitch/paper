@@ -70,13 +70,13 @@ export default function Ticket() {
                   'nittany lions', 'hoosiers', 'boilermakers', 'cornhuskers', 'jayhawks', 'cyclones',
                   'mountaineers', 'horned frogs', 'red raiders', 'gamecocks', 'commodores', 'rebels',
                   'razorbacks', 'huskies', 'ducks', 'beavers', 'bruins', 'trojans', 'sun devils',
-                  'buffaloes', 'utes', 'cougar', 'golden bears', 'cardinal', 'fighting irish',
+                  'buffaloes', 'utes', 'cougar', 'golden bears', 'golden gophers', 'gophers', 'cardinal', 'fighting irish',
                   'tar heels', 'cavaliers', 'hokies', 'demon deacons', 'blue devils', 'wolfpack',
                   'yellow jackets', 'hurricanes', 'orange', 'owls', 'mustangs', 'bearcats',
                   'memphis', 'tulane', 'tulsa', 'smu', 'ucf', 'usf', 'cincinnati', 'louisville',
                   'pitt', 'boston college', 'syracuse', 'duke', 'wake forest', 'virginia tech',
                   'georgia tech', 'miami hurricanes', 'florida state', 'nc state', 'northwestern',
-                  'purdue', 'indiana', 'maryland', 'rutgers', 'minnesota', 'iowa', 'wisconsin',
+                  'purdue', 'indiana', 'maryland', 'rutgers', 'iowa', 'wisconsin',
                   'illinois', 'nebraska', 'kansas', 'kansas state', 'oklahoma state', 'west virginia',
                   'tcu', 'texas tech', 'colorado', 'utah', 'arizona state', 'ucla', 'usc', 'cal',
                   'stanford', 'washington state', 'oregon state', 'auburn', 'alabama'
@@ -87,18 +87,48 @@ export default function Ticket() {
                   'chiefs', 'raiders', 'chargers', 'rams', 'dolphins', 'vikings', 'patriots', 'saints',
                   'giants', 'jets', 'eagles', 'steelers', '49ers', 'seahawks', 'buccaneers', 'titans', 'commanders'];
                 
+                const pickTextLower = String(pick.team ?? '').toLowerCase();
                 let sport = 'ncaaf'; // Default to college football
-                
-                // Check college first to avoid "Baylor Bears" matching NFL "Bears"
-                const isCollege = collegeKeywords.some(keyword => resolvedLower.includes(keyword));
-                if (!isCollege && nflTeams.some(team => resolvedLower.includes(team))) {
+
+                const hasExplicitNFLTag = /(\(|\b)nfl\b/i.test(pickTextLower);
+                const hasExplicitCollegeTag = /(\(|\b)(ncaaf|cfb|college)\b/i.test(pickTextLower);
+
+                if (hasExplicitNFLTag) {
                   sport = 'nfl';
+                } else if (hasExplicitCollegeTag) {
+                  sport = 'ncaaf';
+                } else {
+                  const matchedCollegeKeyword = collegeKeywords.find(keyword => resolvedLower.includes(keyword));
+                  const matchedNFLTeam = nflTeams.find(team => resolvedLower.includes(team));
+                  if (matchedNFLTeam && !matchedCollegeKeyword) {
+                    sport = 'nfl';
+                  } else if (!matchedNFLTeam && matchedCollegeKeyword) {
+                    sport = 'ncaaf';
+                  } else if (matchedNFLTeam && matchedCollegeKeyword) {
+                    // When both match (e.g., Bears vs Baylor Bears), prefer the explicit mascot match.
+                    const nflHasUniqueMascot = !['bears', 'lions', 'tigers'].includes(matchedNFLTeam);
+                    sport = nflHasUniqueMascot ? 'nfl' : 'ncaaf';
+                  }
                 }
                 
                 const gameDetails = await fetchGameDetails(pick.resolvedTeam, sport);
                 if (gameDetails) {
+                  const pickTextLower = String(pick.team ?? '').toLowerCase();
+                  const hasOverKeyword = /\bover\b/.test(pickTextLower);
+                  const hasUnderKeyword = /\bunder\b/.test(pickTextLower);
+                  let adjustedResolved = pick.resolvedTeam;
+
+                  if ((hasOverKeyword || hasUnderKeyword) && !pick.isTail && !pick.isReverseTail) {
+                    const matchup = `${gameDetails.awayTeam} @ ${gameDetails.homeTeam}`;
+                    const ouLabel = hasOverKeyword && !hasUnderKeyword ? 'Over' : hasUnderKeyword && !hasOverKeyword ? 'Under' : (hasOverKeyword ? 'Over' : 'Under');
+                    const totalValue = gameDetails.overUnder ?? pick.gameOverUnder;
+                    const totalText = totalValue ? ` ${totalValue}` : '';
+                    adjustedResolved = `${matchup} (${ouLabel}${totalText})`;
+                  }
+
                   return {
                     ...pick,
+                    resolvedTeam: adjustedResolved,
                     gameStatus: gameDetails.status,
                     gameDate: gameDetails.gameDate,
                     gameDateFormatted: gameDetails.gameDateFormatted,
