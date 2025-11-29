@@ -288,10 +288,15 @@ export default function Ticket() {
                           }
                           
                           // Not an over/under bet - handle as spread bet
-                          // Remove parenthesis part: "Away @ Home (pick details)" -> "Away @ Home"
+                          // Extract pick details from parentheses: "Away @ Home (Team +/-X)" -> "Team +/-X"
+                          const pickDetailsMatch = pick.resolvedTeam.match(/\(([^)]+)\)$/);
+                          if (pickDetailsMatch) {
+                            // We have parentheses with pick details - just show that (e.g., "Minnesota Vikings +11.5")
+                            return pickDetailsMatch[1];
+                          }
+                          
+                          // Fallback: no parentheses, extract team name and calculate spread
                           const withoutParens = pick.resolvedTeam.replace(/\s*\([^)]*\)\s*$/, '').trim();
-                          // Extract the team name they bet on from the resolved text
-                          // The resolved format is "Away Team @ Home Team"
                           const teams = withoutParens.split('@').map(t => t.trim());
                           let teamName = withoutParens;
                           let isPickedTeamHome = false;
