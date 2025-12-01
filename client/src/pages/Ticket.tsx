@@ -276,14 +276,29 @@ export default function Ticket() {
                   const pickTextLower = String(pick.team ?? '').toLowerCase();
                   const hasOverKeyword = /\bover\b/.test(pickTextLower);
                   const hasUnderKeyword = /\bunder\b/.test(pickTextLower);
+                  const resolvedPickDetails = pick.resolvedTeam.match(/\(([^()]+)\)\s*$/)?.[1]?.trim() ?? '';
+                  const numericFromResolved = (() => {
+                    const match = resolvedPickDetails.match(/(\d+\.?\d*)/);
+                    return match ? parseFloat(match[1]) : undefined;
+                  })();
+                  const numericFromPickText = (() => {
+                    const match = pickTextLower.match(/(over|under)\s*(\d+\.?\d*)/i);
+                    return match ? parseFloat(match[2]) : undefined;
+                  })();
                   let adjustedResolved = pick.resolvedTeam;
 
                   if ((hasOverKeyword || hasUnderKeyword) && !pick.isTail && !pick.isReverseTail) {
                     const matchup = `${gameDetails.awayTeam} @ ${gameDetails.homeTeam}`;
                     const ouLabel = hasOverKeyword && !hasUnderKeyword ? 'Over' : hasUnderKeyword && !hasOverKeyword ? 'Under' : (hasOverKeyword ? 'Over' : 'Under');
-                    const totalValue = gameDetails.overUnder ?? pick.gameOverUnder;
-                    const totalText = totalValue ? ` ${totalValue}` : '';
+                    const derivedTotal = [
+                      gameDetails.overUnder,
+                      pick.gameOverUnder,
+                      numericFromResolved,
+                      numericFromPickText
+                    ].find(value => typeof value === 'number' && !Number.isNaN(value));
+                    const totalText = typeof derivedTotal === 'number' ? ` ${derivedTotal}` : '';
                     adjustedResolved = `${matchup} (${ouLabel}${totalText})`;
+                    gameDetails.overUnder = typeof derivedTotal === 'number' ? derivedTotal : gameDetails.overUnder;
                   }
 
                   return {
@@ -302,7 +317,7 @@ export default function Ticket() {
                     broadcasts: gameDetails.broadcasts,
                     tvChannel: gameDetails.broadcasts?.[0] || pick.tvChannel,
                     gameSpread: gameDetails.spread,
-                    gameOverUnder: gameDetails.overUnder,
+                    gameOverUnder: gameDetails.overUnder ?? pick.gameOverUnder ?? numericFromResolved ?? numericFromPickText,
                     favoriteTeam: gameDetails.favoriteTeam,
                   };
                 }
