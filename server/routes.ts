@@ -1,9 +1,8 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { getSheetData, appendToSheet } from "./googleSheets";
+import { getSheetData, appendToSheet, getSheetRawValues, updateSheetValues, updateSheetCellValue } from "./googleSheets";
 import { resolvePickToGameServer } from './pickResolver';
-import { getSheetRawValues, updateSheetValues } from './googleSheets';
 import { resolvePickFromESPN, getWeekDate, lookupGameByResolvedText, detectSport, type GameDetails } from './espnResolver';
 
 export async function registerRoutes(
@@ -355,6 +354,82 @@ export async function registerRoutes(
       res.json({ week: weekNumber, picks });
     } catch (error) {
       console.error("API /week-picks error:", error);
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.post('/api/pick-result', async (req, res) => {
+    try {
+      const sheet = typeof req.body?.sheet === 'string'
+        ? req.body.sheet
+        : (typeof req.query.sheet === 'string' ? req.query.sheet : 'Season 4');
+      const weekNumber = Number(req.body?.week);
+      const playerName = typeof req.body?.playerName === 'string' ? req.body.playerName.trim() : '';
+      const resultInput = typeof req.body?.result === 'string' ? req.body.result.trim() : '';
+
+      if (!playerName || !weekNumber || Number.isNaN(weekNumber)) {
+        return res.status(400).json({ error: 'playerName and week are required' });
+      }
+
+      const normalizedResult = resultInput.toLowerCase();
+      let resultLetter: 'W' | 'L' | 'P' | null = null;
+      if (normalizedResult.startsWith('w')) resultLetter = 'W';
+      else if (normalizedResult.startsWith('l')) resultLetter = 'L';
+      else if (normalizedResult.startsWith('p')) resultLetter = 'P';
+
+      if (!resultLetter) {
+        return res.status(400).json({ error: `Invalid result value: ${resultInput}` });
+      }
+
+      const raw = await getSheetRawValues(String(sheet));
+      if (!raw || raw.length === 0) {
+        return res.status(400).json({ error: 'Empty sheet data' });
+      }
+
+      const headers = raw[0].map(String);
+      const rows = raw.slice(1);
+
+      const weekColumnIndex = headers.findIndex(h => /week/i.test(String(h)));
+      if (weekColumnIndex === -1) {
+        return res.status(400).json({ error: 'Week column not found' });
+      }
+
+      const weekRowIndex = rows.findIndex(row => {
+        const rawValue = row[weekColumnIndex];
+        if (rawValue === undefined || rawValue === null) return false;
+        const numeric = Number(String(rawValue).replace(/[^0-9]/g, ''));
+        return numeric === weekNumber;
+      });
+
+      if (weekRowIndex === -1) {
+        return res.status(404).json({ error: `Week ${weekNumber} not found` });
+      }
+
+      const playerLower = playerName.toLowerCase();
+      const exactHeader = headers.findIndex(h => String(h).toLowerCase().trim() === `${playerLower} win/lose/push`);
+      const fuzzyHeader = headers.findIndex(h => {
+        const lower = String(h).toLowerCase().trim();
+        if (!lower.startsWith(playerLower)) return false;
+        return lower.includes('win') || lower.includes('lose') || lower.includes('push');
+      });
+      const resultColIndex = exactHeader >= 0 ? exactHeader : fuzzyHeader;
+
+      if (resultColIndex === -1) {
+        return res.status(404).json({ error: `Result column not found for ${playerName}` });
+      }
+
+      const existingRaw = rows[weekRowIndex][resultColIndex];
+      const existingLetter = String(existingRaw ?? '').trim().toUpperCase();
+      if (existingLetter.startsWith(resultLetter)) {
+        return res.json({ updated: false, alreadySet: true, value: existingLetter });
+      }
+
+      const sheetRowNumber = weekRowIndex + 2; // +1 for header row, +1 for 1-based rows
+      await updateSheetCellValue(String(sheet), sheetRowNumber, resultColIndex, resultLetter);
+
+      res.json({ updated: true, sheet, week: weekNumber, playerName, value: resultLetter });
+    } catch (error) {
+      console.error('API /pick-result error:', error);
       res.status(500).json({ error: String(error) });
     }
   });

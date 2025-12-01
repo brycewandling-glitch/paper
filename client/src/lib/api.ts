@@ -731,6 +731,30 @@ export async function fetchPicksByWeek(sheetName = 'Season 1', weekNumber: numbe
   return picks;
 }
 
+export async function syncPickResultToSheet(params: {
+  sheetName: string;
+  weekNumber: number;
+  playerName: string;
+  result: 'Win' | 'Loss' | 'Push';
+}): Promise<void> {
+  const { sheetName, weekNumber, playerName, result } = params;
+  const res = await fetch('/api/pick-result', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sheet: sheetName,
+      week: weekNumber,
+      playerName,
+      result,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to sync result for ${playerName}: ${res.status} ${text}`);
+  }
+}
+
 export async function fetchSeasonWeekCount(sheetName = 'Season 1'): Promise<number> {
   const res = await fetch(`/api/data?sheet=${encodeURIComponent(sheetName)}`);
   if (!res.ok) {

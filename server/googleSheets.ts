@@ -7,10 +7,29 @@ const SHEET_ID = "1ofqCoqK5C5aZG2HzFaS7ZmlJoF_YbIziHhqX5cq9SW4";
 const DEFAULT_SHEET_NAME = "season 1";
 const DEFAULT_RANGE_END = "ZZ1000"; // Extend range to include columns beyond Z (AA, AB, ...)
 
+function columnIndexToLetter(index: number) {
+  if (index < 0) throw new Error(`Invalid column index: ${index}`);
+  let result = "";
+  let current = index;
+  while (current >= 0) {
+    result = String.fromCharCode((current % 26) + 65) + result;
+    current = Math.floor(current / 26) - 1;
+  }
+  return result;
+}
+
 function sheetRangeFor(sheetName = DEFAULT_SHEET_NAME) {
   // Safely wrap sheet name in single quotes and escape existing single quotes
   const safe = String(sheetName).replace(/'/g, "''");
   return `'${safe}'!A1:${DEFAULT_RANGE_END}`;
+}
+
+function clearSheetCache(sheetName = DEFAULT_SHEET_NAME) {
+  try {
+    sheetCache.delete(sheetRangeFor(sheetName));
+  } catch (_) {
+    // cache invalidation best-effort
+  }
 }
 
 let authClient: any = null;
@@ -167,9 +186,38 @@ export async function updateSheetValues(sheetName: string, values: (string | num
         values,
       },
     });
+    clearSheetCache(sheetName);
     return response.data;
   } catch (error) {
     console.error('Error updating Google Sheets:', error);
+    throw error;
+  }
+}
+
+export async function updateSheetCellValue(sheetName: string, rowNumber: number, columnIndex: number, value: string | number | null) {
+  if (!sheetName) throw new Error('Sheet name is required');
+  if (rowNumber < 1) throw new Error(`Row numbers are 1-based. Received ${rowNumber}`);
+  if (columnIndex < 0) throw new Error(`Invalid column index ${columnIndex}`);
+
+  const auth = await getAuthClient();
+  const sheets = google.sheets({ version: 'v4', auth });
+  const safeSheet = `'${String(sheetName).replace(/'/g, "''")}'`;
+  const columnLetter = columnIndexToLetter(columnIndex);
+  const range = `${safeSheet}!${columnLetter}${rowNumber}`;
+
+  try {
+    const response = await sheets.spreadsheets.values.update({
+      spreadsheetId: SHEET_ID,
+      range,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: {
+        values: [[value ?? '']],
+      },
+    });
+    clearSheetCache(sheetName);
+    return response.data;
+  } catch (error) {
+    console.error('Error updating Sheet cell:', error);
     throw error;
   }
 }

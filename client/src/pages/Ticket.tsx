@@ -1,10 +1,169 @@
 import React, { useState } from 'react';
 import { Layout } from '@/components/Layout';
 import { getSeasonInfo, type Pick } from '@/lib/mockData';
-import { fetchSeasonPlayers, fetchPicksByWeek, fetchSeasonWeekCount, fetchGameDetails } from '@/lib/api';
+import { fetchSeasonPlayers, fetchPicksByWeek, fetchSeasonWeekCount, fetchGameDetails, syncPickResultToSheet } from '@/lib/api';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { Trophy, Medal, Ticket as TicketIcon } from 'lucide-react';
+
+type ComputedPickOutcome = {
+  result: 'Win' | 'Loss' | 'Push';
+  finalScore: string;
+};
+
+const MONEYLINE_REGEX = /\b(ml|moneyline)\b/i;
+
+const normalizeTeamName = (name?: string) =>
+  name ? name.toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+
+const stripMetaFromTeam = (value?: string) => {
+  if (!value) return '';
+  return value
+    .replace(/\(?\s*(legends|leaders|nfl|nba|mlb|nhl|ncaaf|cfb|ncaab|cbb)\s*\)?/gi, '')
+    .replace(MONEYLINE_REGEX, '')
+    .trim();
+};
+
+const formatFinalScore = (pick: Pick) => {
+  const awayLabel = pick.awayAbbrev || pick.awayTeam || 'Away';
+  const homeLabel = pick.homeAbbrev || pick.homeTeam || 'Home';
+  return `${awayLabel} ${pick.awayScore ?? ''} - ${homeLabel} ${pick.homeScore ?? ''}`.trim();
+};
+
+const matchTeamSide = (candidate: string, pick: Pick): 'home' | 'away' | null => {
+  const normalizedCandidate = normalizeTeamName(candidate);
+  if (!normalizedCandidate) return null;
+  const home = normalizeTeamName(pick.homeTeam);
+  const away = normalizeTeamName(pick.awayTeam);
+
+  if (home && (home.includes(normalizedCandidate) || normalizedCandidate.includes(home))) {
+    return 'home';
+  }
+  if (away && (away.includes(normalizedCandidate) || normalizedCandidate.includes(away))) {
+    return 'away';
+  }
+  return null;
+};
+
+const extractSpreadFromText = (text: string) => {
+  if (!text || /\b(over|under)\b/i.test(text)) return null;
+  const cleaned = stripMetaFromTeam(text);
+  const match = cleaned.match(/(.+?)\s*([+-]?\d+\.?\d*)\s*$/);
+  if (!match) return null;
+  const teamName = match[1].trim();
+  const spread = parseFloat(match[2]);
+  if (!teamName || Number.isNaN(spread)) return null;
+  return { teamName, spread };
+};
+
+const deriveSpreadFromGame = (pick: Pick, side: 'home' | 'away') => {
+  if (typeof pick.gameSpread !== 'number') return null;
+  if (!pick.favoriteTeam) return null;
+  const pickedAbbrev = (side === 'home' ? pick.homeAbbrev : pick.awayAbbrev)?.toUpperCase();
+  if (!pickedAbbrev) return null;
+  const isFavorite = pickedAbbrev === pick.favoriteTeam.toUpperCase();
+  const absolute = Math.abs(pick.gameSpread);
+  return isFavorite ? -absolute : absolute;
+};
+
+const evaluateSpreadResult = (
+  pick: Pick,
+  side: 'home' | 'away',
+  spread: number,
+  finalScore: string
+): ComputedPickOutcome => {
+  const pickScore = side === 'home' ? pick.homeScore! : pick.awayScore!;
+  const oppScore = side === 'home' ? pick.awayScore! : pick.homeScore!;
+  const adjusted = pickScore + spread;
+  if (Math.abs(adjusted - oppScore) < 0.0001) {
+    return { result: 'Push', finalScore };
+  }
+  return { result: adjusted > oppScore ? 'Win' : 'Loss', finalScore };
+};
+
+const evaluateMoneylineResult = (
+  pick: Pick,
+  side: 'home' | 'away',
+  finalScore: string
+): ComputedPickOutcome => {
+  const pickScore = side === 'home' ? pick.homeScore! : pick.awayScore!;
+  const oppScore = side === 'home' ? pick.awayScore! : pick.homeScore!;
+  if (pickScore === oppScore) {
+    return { result: 'Push', finalScore };
+  }
+  return { result: pickScore > oppScore ? 'Win' : 'Loss', finalScore };
+};
+
+const isMoneylinePick = (pick: Pick, detailText: string) => {
+  const source = `${detailText} ${pick.team ?? ''}`;
+  return MONEYLINE_REGEX.test(source);
+};
+
+const computePickOutcomeFromGame = (pick: Pick): ComputedPickOutcome | null => {
+  if (pick.gameStatus !== 'final') return null;
+  if (typeof pick.homeScore !== 'number' || typeof pick.awayScore !== 'number') return null;
+  if (!pick.resolvedTeam || pick.resolvedTeam.startsWith('Tail') || pick.resolvedTeam.startsWith('Reverse Tail')) {
+    return null;
+  }
+  if (pick.isTail || pick.isReverseTail) return null;
+
+  const finalScore = formatFinalScore(pick);
+
+  const overUnderMatch = pick.resolvedTeam.match(/\((Over|Under)\s*(\d+\.?\d*)?\)/i);
+  if (overUnderMatch) {
+    const threshold = overUnderMatch[2]
+      ? parseFloat(overUnderMatch[2])
+      : (typeof pick.gameOverUnder === 'number' ? pick.gameOverUnder : Number(pick.gameOverUnder));
+    if (Number.isNaN(threshold)) return null;
+    const totalScore = pick.homeScore + pick.awayScore;
+    if (Math.abs(totalScore - threshold) < 0.0001) {
+      return { result: 'Push', finalScore };
+    }
+    const isOver = overUnderMatch[1].toLowerCase() === 'over';
+    return {
+      result: isOver ? (totalScore > threshold ? 'Win' : 'Loss') : (totalScore < threshold ? 'Win' : 'Loss'),
+      finalScore,
+    };
+  }
+
+  const detailMatch = pick.resolvedTeam.match(/\(([^()]+)\)\s*$/);
+  const detailText = detailMatch ? detailMatch[1].trim() : '';
+  const spreadFromDetail = detailText ? extractSpreadFromText(detailText) : null;
+  const spreadFromPick = pick.team ? extractSpreadFromText(String(pick.team)) : null;
+  let numericSpread = spreadFromDetail?.spread;
+  if (numericSpread === undefined || Number.isNaN(numericSpread)) {
+    numericSpread = spreadFromPick?.spread ?? null;
+  }
+
+  const candidateTeams = Array.from(new Set([
+    spreadFromDetail?.teamName,
+    spreadFromPick?.teamName,
+    detailText && !spreadFromDetail ? stripMetaFromTeam(detailText) : null,
+    stripMetaFromTeam(pick.team)
+  ].filter(Boolean) as string[]));
+
+  const moneyline = isMoneylinePick(pick, detailText);
+
+  for (const candidate of candidateTeams) {
+    const side = matchTeamSide(candidate, pick);
+    if (!side) continue;
+
+    if (typeof numericSpread === 'number' && !Number.isNaN(numericSpread)) {
+      return evaluateSpreadResult(pick, side, numericSpread, finalScore);
+    }
+
+    const derivedSpread = deriveSpreadFromGame(pick, side);
+    if (typeof derivedSpread === 'number' && !Number.isNaN(derivedSpread)) {
+      return evaluateSpreadResult(pick, side, derivedSpread, finalScore);
+    }
+
+    if (moneyline) {
+      return evaluateMoneylineResult(pick, side, finalScore);
+    }
+  }
+
+  return null;
+};
 
 export default function Ticket() {
   const { week: currentWeek, season: currentSeason } = getSeasonInfo();
@@ -48,6 +207,7 @@ export default function Ticket() {
       try {
         const seasonName = `Season ${currentSeason}`;
         const pls = await fetchSeasonPlayers(seasonName);
+        const playerNameById = new Map(pls.map((player: any) => [player.id, player.name]));
         if (!mounted) return;
         setPlayers(pls);
 
@@ -153,9 +313,49 @@ export default function Ticket() {
             return pick;
           })
         );
-        
+
+        const syncPayloads: Array<{ playerName: string; result: 'Win' | 'Loss' | 'Push' }> = [];
+        const enhancedPicks = picksWithGameDetails.map((pick) => {
+          const computed = computePickOutcomeFromGame(pick);
+          if (!computed) {
+            return pick;
+          }
+
+          if (pick.result !== computed.result) {
+            const playerName = playerNameById.get(pick.playerId);
+            if (playerName) {
+              syncPayloads.push({ playerName, result: computed.result });
+            }
+          }
+
+          return {
+            ...pick,
+            result: computed.result,
+            finalScore: computed.finalScore,
+          };
+        });
+
         if (!mounted) return;
-        setPicks(picksWithGameDetails);
+        setPicks(enhancedPicks);
+
+        if (syncPayloads.length > 0) {
+          const syncPromises = syncPayloads.map(payload =>
+            syncPickResultToSheet({
+              sheetName: seasonName,
+              weekNumber: selectedWeek,
+              playerName: payload.playerName,
+              result: payload.result,
+            })
+          );
+
+          void Promise.allSettled(syncPromises).then(results => {
+            results.forEach((result, idx) => {
+              if (result.status === 'rejected') {
+                console.error('Failed to sync pick result', syncPayloads[idx], result.reason);
+              }
+            });
+          });
+        }
       } catch (err) {
         console.error('Failed to load picks', err);
         if (mounted) {
