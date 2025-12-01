@@ -287,8 +287,14 @@ export async function fetchSeasonPlayers(sheetName = 'Season 1', winPctIncludePu
       const pushesFromTotals = totalPushesRow ? parseNumber(totalPushesRow[totalsCol], NaN) : NaN;
       const pctFromTotals = winPctRow ? parseNumber(winPctRow[totalsCol], NaN) : NaN;
 
-      const hasOverride = !Number.isNaN(winsFromTotals) || !Number.isNaN(lossesFromTotals) || !Number.isNaN(pushesFromTotals);
-      if (!hasOverride) continue;
+      const totalsSum = (Number.isNaN(winsFromTotals) ? 0 : winsFromTotals)
+        + (Number.isNaN(lossesFromTotals) ? 0 : lossesFromTotals)
+        + (Number.isNaN(pushesFromTotals) ? 0 : pushesFromTotals);
+      const computedSum = player.wins + player.losses + player.pushes;
+
+      const hasTotalsData = !Number.isNaN(winsFromTotals) || !Number.isNaN(lossesFromTotals) || !Number.isNaN(pushesFromTotals);
+      const shouldOverride = hasTotalsData && totalsSum > 0 && computedSum === 0;
+      if (!shouldOverride) continue;
 
       if (!Number.isNaN(winsFromTotals)) player.wins = winsFromTotals;
       if (!Number.isNaN(lossesFromTotals)) player.losses = lossesFromTotals;
