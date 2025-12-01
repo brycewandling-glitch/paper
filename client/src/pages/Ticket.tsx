@@ -350,8 +350,33 @@ export default function Ticket() {
           };
         });
 
+        const pickByPlayerId = new Map<number, Pick>();
+        enhancedPicks.forEach(p => pickByPlayerId.set(p.playerId, p));
+
+        const picksWithTailPropagation = enhancedPicks.map((pick) => {
+          if (pick.isTail && pick.tailingPlayerId) {
+            const target = pickByPlayerId.get(pick.tailingPlayerId);
+            if (target && target.result !== 'Pending') {
+              if (pick.result !== target.result) {
+                const playerName = playerNameById.get(pick.playerId);
+                if (playerName) {
+                  syncPayloads.push({ playerName, result: target.result });
+                }
+              }
+
+              return {
+                ...pick,
+                result: target.result,
+                finalScore: target.finalScore,
+                resolvedTeam: target.resolvedTeam,
+              };
+            }
+          }
+          return pick;
+        });
+
         if (!mounted) return;
-        setPicks(enhancedPicks);
+        setPicks(picksWithTailPropagation);
 
         if (syncPayloads.length > 0) {
           const syncPromises = syncPayloads.map(payload =>
