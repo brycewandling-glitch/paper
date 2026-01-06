@@ -267,7 +267,6 @@ const TEAM_ALIASES: Record<string, string[]> = {
   'Rutgers': ['rutgers', 'scarlet knights'],
   'Maryland': ['maryland', 'terrapins', 'terps'],
   'Vanderbilt': ['vanderbilt', 'vandy', 'vandy baby', 'vandy baby!', 'commodores'],
-  'Iowa': ['iowa', 'hawkeyes'],
   'UC San Diego Tritons': ['uc san diego', 'ucsd', 'san diego tritons', 'uc san diego tritons', 'university of california san diego'],
   // Additional college teams for bowl games
   'UNLV': ['unlv', 'rebels', 'unlv rebels', 'las vegas rebels'],
