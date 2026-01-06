@@ -15,7 +15,7 @@ function Router() {
     <Switch>
       <Route path="/" component={Standings} />
       <Route path="/picks" component={Picks} />
-      <Route path="/ticket" component={Ticket} />
+      <Route path="/bets" component={Ticket} />
       <Route path="/papermetrics" component={Papermetrics} />
       <Route path="/rules" component={Rules} />
       <Route component={NotFound} />
