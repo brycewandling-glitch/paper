@@ -266,6 +266,8 @@ const TEAM_ALIASES: Record<string, string[]> = {
   'Minnesota': ['minnesota', 'golden gophers', 'gophers'],
   'Rutgers': ['rutgers', 'scarlet knights'],
   'Maryland': ['maryland', 'terrapins', 'terps'],
+  'Vanderbilt': ['vanderbilt', 'vandy', 'vandy baby', 'vandy baby!', 'commodores'],
+  'Iowa': ['iowa', 'hawkeyes'],
   'UC San Diego Tritons': ['uc san diego', 'ucsd', 'san diego tritons', 'uc san diego tritons', 'university of california san diego'],
   // Additional college teams for bowl games
   'UNLV': ['unlv', 'rebels', 'unlv rebels', 'las vegas rebels'],
@@ -1509,6 +1511,36 @@ export async function lookupGameByResolvedText(
   // Expected format: "Away Team @ Home Team (pick details)"
   const match = resolvedText.match(/^(.+?)\s*@\s*(.+?)(?:\s*\(|$)/);
   if (!match) {
+    // Fallback: try to extract team name from format like "Team (Team -4.5)"
+    const teamOnlyMatch = resolvedText.match(/^(.+?)\s*\(/);
+    if (teamOnlyMatch) {
+      const teamName = teamOnlyMatch[1].trim();
+      const canonicalTeam = findTeamMatch(teamName);
+      if (canonicalTeam) {
+        console.log(`[ESPN] Fallback lookup for team: ${canonicalTeam} (from "${teamName}")`);
+        // Try to find this team's game using resolvePickFromESPN logic
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - 10);
+        const endDate = new Date();
+        endDate.setDate(endDate.getDate() + 7);
+        
+        const events = await fetchESPNGames(sport, startDate, endDate);
+        for (const event of events) {
+          if (!event.competitions || event.competitions.length === 0) continue;
+          const competition = event.competitions[0];
+          const homeTeam = competition.competitors.find(c => c.homeAway === 'home')?.team;
+          const awayTeam = competition.competitors.find(c => c.homeAway === 'away')?.team;
+          if (!homeTeam || !awayTeam) continue;
+          
+          if (teamsMatch(canonicalTeam, homeTeam) || teamsMatch(canonicalTeam, awayTeam)) {
+            const matchedTeam = teamsMatch(canonicalTeam, homeTeam) ? homeTeam.displayName : awayTeam.displayName;
+            console.log(`[ESPN] Found game for ${canonicalTeam}: ${awayTeam.displayName} @ ${homeTeam.displayName}`);
+            const parsed = pickText ? parsePickText(pickText) : { team: matchedTeam };
+            return extractGameDetails(event, competition, matchedTeam, parsed, sport);
+          }
+        }
+      }
+    }
     console.log(`[ESPN] Cannot parse resolved text: "${resolvedText}"`);
     return null;
   }
