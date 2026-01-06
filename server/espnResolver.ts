@@ -1513,14 +1513,21 @@ export async function lookupGameByResolvedText(
     return null;
   }
 
-  const awayTeamName = match[1].trim();
-  const homeTeamName = match[2].trim();
+  const awayTeamRaw = match[1].trim();
+  const homeTeamRaw = match[2].trim();
+  
+  // Expand team aliases (e.g., "tt" -> "Texas Tech")
+  const awayTeamCanonical = findTeamMatch(awayTeamRaw);
+  const homeTeamCanonical = findTeamMatch(homeTeamRaw);
+  const awayTeamName = awayTeamCanonical || awayTeamRaw;
+  const homeTeamName = homeTeamCanonical || homeTeamRaw;
 
-  console.log(`[ESPN] Looking up game: ${awayTeamName} @ ${homeTeamName}`);
+  console.log(`[ESPN] Looking up game: ${awayTeamName} @ ${homeTeamName} (raw: ${awayTeamRaw} @ ${homeTeamRaw})`);
 
-  // Fetch recent/upcoming games (last 3 days to next 7 days)
+  // Fetch recent/upcoming games (last 10 days to next 7 days)
+  // Extended window to cover bowl games that may have been played earlier in the week
   const startDate = new Date();
-  startDate.setDate(startDate.getDate() - 3);
+  startDate.setDate(startDate.getDate() - 10);
   const endDate = new Date();
   endDate.setDate(endDate.getDate() + 7);
 
