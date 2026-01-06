@@ -1554,7 +1554,7 @@ export async function lookupGameByResolvedText(
       const parsedContext = pickText
         ? parsePickText(pickText)
         : pickMatch
-          ? parsePickText(pickMatch)
+          ? parsePickText(pickMatch[1])
           : { team: fallbackMatched } as ParsedPick;
 
       let matchedPickLabel = fallbackMatched;
