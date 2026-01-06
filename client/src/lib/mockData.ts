@@ -9,6 +9,8 @@ export interface Player {
   pushes: number;
   winPercentage: number;
   currentStreak: string; // e.g., "W5" or "L2"
+  allTimeNet?: number; // Sum of (perPlayerPayout - betTotal) across all seasons
+  balance?: number; // allTimeNet minus total payouts received
 }
 
 export interface Pick {
@@ -17,6 +19,7 @@ export interface Pick {
   playerId: number;
   team: string;
   resolvedTeam?: string; // The full resolved game/match name from ESPN
+  matchedTeam?: string; // The canonical team name matched from ESPN (e.g., "Vanderbilt Commodores" for "Vandy Baby!")
   odds: string;
   amount: number;
   result: 'Win' | 'Loss' | 'Push' | 'Pending';
@@ -42,6 +45,21 @@ export interface Pick {
   gameSpread?: number; // The spread from ESPN (absolute value)
   gameOverUnder?: number; // The over/under total from ESPN
   favoriteTeam?: string; // Which team is favored (abbreviation like "OSU")
+  displayClock?: string;
+  clockSeconds?: number;
+  period?: number;
+  regulationPeriods?: number;
+  secondsRemaining?: number;
+  gameProgress?: number;
+  winProbability?: number;
+  probabilitySource?: 'espn' | 'heuristic';
+  winConfidence?: 'likely_win' | 'coin_flip' | 'likely_loss';
+  coverMargin?: number;
+  projectedTotal?: number;
+  betType?: 'spread' | 'total' | 'moneyline';
+  possession?: 'home' | 'away';
+  possessionTeamId?: string;
+  possessionText?: string;
 }
 
 // Mock Data Generator

@@ -136,6 +136,7 @@ const computePickOutcomeFromGame = (pick: Pick): ComputedPickOutcome | null => {
   }
 
   const candidateTeams = Array.from(new Set([
+    pick.matchedTeam, // Use the canonical matched team name from ESPN first
     spreadFromDetail?.teamName,
     spreadFromPick?.teamName,
     detailText && !spreadFromDetail ? stripMetaFromTeam(detailText) : null,
@@ -304,6 +305,7 @@ export default function Ticket() {
                   return {
                     ...pick,
                     resolvedTeam: adjustedResolved,
+                    matchedTeam: gameDetails.matchedTeam,
                     gameStatus: gameDetails.status,
                     gameDate: gameDetails.gameDate,
                     gameDateFormatted: gameDetails.gameDateFormatted,
