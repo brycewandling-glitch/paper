@@ -1,7 +1,6 @@
 import { google } from "googleapis";
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
 
 const SHEET_ID = "1ofqCoqK5C5aZG2HzFaS7ZmlJoF_YbIziHhqX5cq9SW4";
 const DEFAULT_SHEET_NAME = "season 1";
@@ -34,22 +33,24 @@ function clearSheetCache(sheetName = DEFAULT_SHEET_NAME) {
 
 let authClient: any = null;
 
+function resolveCredentialsPath() {
+  const projectRoot = process.cwd();
+  const fallback = path.resolve(projectRoot, ".env.google.json");
+  const configuredPath = process.env.GOOGLE_CREDENTIALS_PATH;
+
+  if (!configuredPath) {
+    return fallback;
+  }
+
+  return path.isAbsolute(configuredPath)
+    ? configuredPath
+    : path.resolve(projectRoot, configuredPath);
+}
+
 async function getAuthClient() {
   if (authClient) return authClient;
 
-  const resolvedDir = typeof __dirname !== "undefined"
-    ? __dirname
-    : path.dirname(fileURLToPath(import.meta.url));
-
-  const defaultCredentialsPath = path.resolve(
-    resolvedDir,
-    "..",
-    ".env.google.json"
-  );
-
-  const credentialsPath = process.env.GOOGLE_CREDENTIALS_PATH
-    ? path.resolve(process.env.GOOGLE_CREDENTIALS_PATH)
-    : defaultCredentialsPath;
+  const credentialsPath = resolveCredentialsPath();
 
   if (!fs.existsSync(credentialsPath)) {
     throw new Error(

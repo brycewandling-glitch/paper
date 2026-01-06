@@ -328,12 +328,20 @@ const TEAM_ALIASES: Record<string, string[]> = {
   'Montana State': ['montana state', 'montana st', 'bobcats', 'msu bobcats'],
   'North Dakota State': ['north dakota state', 'ndsu', 'bison'],
   'South Dakota State': ['south dakota state', 'jackrabbits'],
+  'Illinois State': ['illinois state', 'illinois st', 'redbirds'],
   'Villanova': ['villanova', 'wildcats', 'nova'],
   'Delaware': ['delaware', 'blue hens'],
   'UC Davis': ['uc davis', 'aggies'],
   'Weber State': ['weber state', 'wildcats'],
   'Eastern Washington': ['eastern washington', 'ewu', 'eagles'],
   'Sacramento State': ['sacramento state', 'sac state', 'hornets'],
+  // ACC and other major conference teams
+  'Virginia Tech': ['virginia tech', 'hokies', 'vt', 'va tech'],
+  'Virginia': ['virginia', 'cavaliers', 'uva', 'wahoos'],
+  'Wake Forest': ['wake forest', 'demon deacons', 'wake'],
+  'Boston College': ['boston college', 'bc', 'eagles'],
+  'Syracuse': ['syracuse', 'orange', 'cuse'],
+  'Pittsburgh': ['pittsburgh', 'pitt', 'panthers'],
 };
 
 // Teams that require direct ESPN team-id lookups (scoreboard may omit them)
@@ -343,6 +351,7 @@ const TEAM_ID_OVERRIDES: Record<string, { teamId: string }> = {
   // FCS teams (ESPN FCS scoreboard endpoint is broken, so we use team schedules)
   'Montana': { teamId: '149' },
   'Montana State': { teamId: '147' },
+  'Illinois State': { teamId: '2287' },
   'North Dakota State': { teamId: '2449' },
   'South Dakota State': { teamId: '2571' },
   'James Madison': { teamId: '256' },
@@ -957,7 +966,16 @@ function findTeamMatch(searchText: string): string | null {
     }
   }
   
-  // Second pass: look for aliases that are contained in the search text
+  // Second pass: prioritize matches where the full team name appears in the search text
+  // This handles cases like "Kentucky Wildcats" matching "Kentucky" over "Arizona" (both have "wildcats" alias)
+  for (const [fullName, aliases] of Object.entries(TEAM_ALIASES)) {
+    const fullNameLower = fullName.toLowerCase();
+    if (search.includes(fullNameLower)) {
+      return fullName;
+    }
+  }
+  
+  // Third pass: look for aliases that are contained in the search text
   // But prioritize longer matches (e.g., "ohio state" over "ohio")
   let bestMatch: string | null = null;
   let bestMatchLength = 0;
@@ -1506,6 +1524,28 @@ export async function lookupGameByResolvedText(
   sport: string = 'nfl',
   pickText?: string
 ): Promise<GameDetails | null> {
+  // Detect sport from resolved text tags like (NCAAB), (NBA), (NFL), (FCS)
+  const sportTagMatch = resolvedText.match(/\((NCAAB|NBA|NFL|FCS|NCAAF|CFB|NHL|MLB)\)\s*$/i);
+  if (sportTagMatch) {
+    const detectedSport = sportTagMatch[1].toLowerCase();
+    if (detectedSport === 'ncaab' || detectedSport === 'cbb') {
+      sport = 'ncaab';
+    } else if (detectedSport === 'nba') {
+      sport = 'nba';
+    } else if (detectedSport === 'nfl') {
+      sport = 'nfl';
+    } else if (detectedSport === 'fcs') {
+      sport = 'fcs';
+    } else if (detectedSport === 'ncaaf' || detectedSport === 'cfb') {
+      sport = 'ncaaf';
+    } else if (detectedSport === 'nhl') {
+      sport = 'nhl';
+    } else if (detectedSport === 'mlb') {
+      sport = 'mlb';
+    }
+    console.log(`[ESPN] Detected sport from resolved text tag: ${sport}`);
+  }
+  
   // Parse the resolved text to extract team names
   // Expected format: "Away Team @ Home Team (pick details)"
   const match = resolvedText.match(/^(.+?)\s*@\s*(.+?)(?:\s*\(|$)/);

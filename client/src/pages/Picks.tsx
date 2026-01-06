@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Layout } from '@/components/Layout';
-import { fetchSeasonWeekCount, fetchSeasonPlayers, fetchPicksByWeek } from '@/lib/api';
+import { fetchSeasonWeekCount, fetchSeasonPlayers, fetchPicksByWeek, fetchWeekDeadline, fetchNextBetAmounts } from '@/lib/api';
 import { getPlayers, getSeasonInfo, savePick, type Pick, type Player } from '@/lib/mockData';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/hooks/use-toast';
 import { Info, PlusCircle, Loader2, Check } from 'lucide-react';
 
-type SportOption = 'ncaaf' | 'nfl' | 'nba' | 'ncaab' | 'mlb' | 'nhl' | 'other';
+type SportOption = '' | 'ncaaf' | 'nfl' | 'nba' | 'ncaab' | 'mlb' | 'nhl' | 'other';
 
 export default function Picks() {
   const { toast } = useToast();
@@ -19,6 +19,7 @@ export default function Picks() {
   
   const [currentWeek, setCurrentWeek] = useState(mockWeek);
   const [players, setPlayers] = useState<Player[]>([]);
+  const [deadlineLabel, setDeadlineLabel] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
 
@@ -46,114 +47,147 @@ export default function Picks() {
     })();
   }, [currentSeason]);
 
-  // Calculate the week we're submitting picks for
-  // Stays on current week until Saturday at 11 AM
-  const now = new Date();
-  const dayOfWeek = now.getDay(); // 0 = Sunday, 5 = Friday, 6 = Saturday
-  const submissionWeek = useMemo(() => {
-    // currentWeek is the latest week with dates <= today
-    // On Friday before deadline, we submit for currentWeek
-    // After Saturday 11 AM, we submit for currentWeek + 1
-    if (dayOfWeek === 5) {
-      // Today is Friday (submission deadline day)
-      return currentWeek;
+  // Keep deadline text in sync with sheet data
+  useEffect(() => {
+    if (!currentWeek || currentWeek < 1) {
+      setDeadlineLabel('');
+      return;
     }
-    if (dayOfWeek === 6) {
-      // Today is Saturday
-      const elevenAM = new Date(now);
-      elevenAM.setHours(11, 0, 0, 0);
-      if (now < elevenAM) {
-        // Before 11 AM, still submitting for current week
-        return currentWeek;
+    let mounted = true;
+    const seasonName = `Season ${currentSeason}`;
+    (async () => {
+      try {
+        const label = await fetchWeekDeadline(seasonName, currentWeek);
+        if (label && mounted) {
+          setDeadlineLabel(label);
+        }
+      } catch (error) {
+        console.error('Failed to fetch week deadline:', error);
       }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [currentWeek, currentSeason]);
+
+  // Submit for the current sheet week; when a new week row is auto-created on Monday,
+  // fetchSeasonWeekCount() bumps currentWeek and this value updates accordingly.
+  const submissionWeek = currentWeek;
+
+  // Fallback deadline if sheet metadata missing
+  const fallbackDeadline = useMemo(() => {
+    const target = new Date();
+    const day = target.getDay();
+    let daysUntilFriday = (5 - day + 7) % 7;
+    if (daysUntilFriday === 0 && target.getHours() >= 22) {
+      daysUntilFriday = 7;
     }
-    // After 11 AM Saturday or any other day, submit for next week
-    return currentWeek + 1;
-  }, [currentWeek, dayOfWeek]);
-
-  // Calculate next Friday at 10 PM deadline (stays on current week until Saturday 11 AM)
-  const deadline = useMemo(() => {
-    const now = new Date();
-    const lockToCurrentWeek = submissionWeek === currentWeek;
-    const target = new Date(now);
-
-    if (lockToCurrentWeek) {
-      // Stick with the just-finished Friday deadline until Saturday 11 AM
-      const day = target.getDay();
-      const daysBack = (day - 5 + 7) % 7;
-      target.setDate(target.getDate() - daysBack);
-      target.setHours(22, 0, 0, 0);
-    } else {
-      const day = target.getDay();
-      const daysUntilFriday = (5 - day + 7) % 7;
-      target.setDate(target.getDate() + daysUntilFriday + (daysUntilFriday === 0 && target.getHours() >= 22 ? 7 : 0));
-      target.setHours(22, 0, 0, 0);
+    if (daysUntilFriday > 0) {
+      target.setDate(target.getDate() + daysUntilFriday);
     }
-
+    target.setHours(22, 0, 0, 0);
     return target.toLocaleDateString('en-US', {
       weekday: 'long',
       month: 'short',
       day: 'numeric'
     }) + ' @ 10:00 PM';
-  }, [submissionWeek, currentWeek]);
+  }, []);
+
+  const deadlineDisplay = deadlineLabel || fallbackDeadline;
 
   const [selectedPlayer, setSelectedPlayer] = useState<string>('');
-  const [pickText, setPickText] = useState('');
-  const [sport, setSport] = useState<SportOption>('ncaaf');
+  const [teamGameText, setTeamGameText] = useState('');
+  const [betText, setBetText] = useState('');
+  const [sport, setSport] = useState<SportOption>('');
   const [isTail, setIsTail] = useState(false);
   const [isReverse, setIsReverse] = useState(false);
   const [showTailModal, setShowTailModal] = useState(false);
   const [selectedTailPlayer, setSelectedTailPlayer] = useState<string>('');
   const [weekPicks, setWeekPicks] = useState<Pick[]>([]);
+  const [nextBetAmountMap, setNextBetAmountMap] = useState<Record<number, number>>({});
 
-  // Fetch current week's picks to calculate bet totals
+  // Fetch current week's picks to calculate bet totals and track who has submitted
   useEffect(() => {
     (async () => {
       try {
         const picks = await fetchPicksByWeek(`Season ${currentSeason}`, currentWeek);
         if (picks && picks.length > 0) {
           setWeekPicks(picks);
+        } else {
+          setWeekPicks([]);
         }
       } catch (error) {
         console.error('Failed to fetch week picks:', error);
         setWeekPicks([]);
       }
     })();
-  }, [currentWeek, currentSeason]);
+  }, [currentWeek, currentSeason, submitSuccess]); // Re-fetch after successful submission
+
+  // Compute the correct bet ladder amounts based on previous results
+  useEffect(() => {
+    if (!players || players.length === 0) {
+      setNextBetAmountMap({});
+      return;
+    }
+
+    let cancelled = false;
+    const seasonName = `Season ${currentSeason}`;
+    (async () => {
+      try {
+        const amounts = await fetchNextBetAmounts(seasonName, submissionWeek, players);
+        if (!cancelled) {
+          setNextBetAmountMap(amounts);
+        }
+      } catch (error) {
+        console.error('Failed to calculate next bet amounts:', error);
+        if (!cancelled) {
+          setNextBetAmountMap({});
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [players, currentSeason, submissionWeek]);
 
   // Calculate bet amount for each player based on their loss streak
   // Rules: Start at $5, increase $5 per loss, cap at $25, reset to $5 after win
   const playerBetAmounts = useMemo(() => {
     const amounts: Map<number, number> = new Map();
-    
+    const hasComputed = nextBetAmountMap && Object.keys(nextBetAmountMap).length > 0;
+
     players.forEach(player => {
-      // Parse the current streak to determine bet amount for THIS week
-      // streak format: "W3", "L2", etc.
-      const streakMatch = (player.currentStreak || '').match(/^([WLP])(\d+)$/);
-      
-      if (streakMatch) {
-        const streakType = streakMatch[1]; // W, L, or P
-        const streakCount = parseInt(streakMatch[2]);
-        
-        if (streakType === 'L') {
-          // On a losing streak: bet is $5 + ($5 * losses), capped at $25
-          const betAmount = Math.min(5 + (streakCount * 5), 25);
-          amounts.set(player.id, betAmount);
-        } else if (streakType === 'W') {
-          // On a winning streak: next bet is $5
-          amounts.set(player.id, 5);
-        } else if (streakType === 'P') {
-          // After a push: keep current bet (but we don't have history, so assume $5)
-          amounts.set(player.id, 5);
-        }
-      } else {
-        // Default to $5 if no streak info
-        amounts.set(player.id, 5);
+      let amount: number | undefined = undefined;
+
+      if (hasComputed && typeof nextBetAmountMap[player.id] === 'number') {
+        amount = nextBetAmountMap[player.id];
       }
+
+      if (amount === undefined) {
+        const streakMatch = (player.currentStreak || '').match(/^([WLP])(\d+)$/);
+        if (streakMatch) {
+          const streakType = streakMatch[1];
+          const streakCount = parseInt(streakMatch[2]);
+          if (streakType === 'L') {
+            amount = Math.min(5 + (streakCount * 5), 25);
+          } else if (streakType === 'W') {
+            amount = 5;
+          } else if (streakType === 'P') {
+            amount = 5;
+          }
+        }
+      }
+
+      if (amount === undefined) {
+        amount = 5;
+      }
+
+      amounts.set(player.id, amount);
     });
     
     return amounts;
-  }, [players]);
+  }, [players, nextBetAmountMap]);
 
   // Calculate total bets per player for current week
   const playerBetTotals = useMemo(() => {
@@ -184,6 +218,19 @@ export default function Picks() {
       calculatedDivision: index < 6 ? 'Legends' : 'Leaders'
     }));
   }, [players]);
+
+  // Filter out players who have already submitted a pick for this week
+  const availablePlayers = useMemo(() => {
+    // Get the set of player IDs who have already submitted a pick (have a non-empty team)
+    const playersWithPicks = new Set(
+      weekPicks
+        .filter(pick => pick.team && pick.team.trim() !== '')
+        .map(pick => pick.playerId)
+    );
+    
+    // Filter out players who have already picked
+    return playersWithDivisions.filter(player => !playersWithPicks.has(player.id));
+  }, [playersWithDivisions, weekPicks]);
 
   // Calculate forced tail state for Legends players with 3 straight losses
   const forcedTailPlayers = useMemo(() => {
@@ -270,10 +317,10 @@ export default function Picks() {
       }
     } else {
       // Normal submission requires all fields
-      if (!selectedPlayer || !pickText.trim()) {
+      if (!selectedPlayer || !teamGameText.trim() || !betText.trim() || !sport) {
         toast({
           title: "Error",
-          description: "Please fill in all fields.",
+          description: "Please fill in your team/game, bet, and sport.",
           variant: "destructive"
         });
         return;
@@ -293,9 +340,10 @@ export default function Picks() {
       // Reverse tail - pick text indicates fading
       actualPickText = `Fade ${tailPlayer?.name || ''}`;
     } else {
-      // Regular pick - append sport tag if provided to help resolution
-      const sportTag = sport && sport !== 'other' ? `(${sport.toUpperCase()})` : '';
-      actualPickText = sportTag ? `${pickText.trim()} ${sportTag}` : pickText.trim();
+      // Regular pick - combine game/bet with spread/total entry and include sport tag for readability
+      const basePickText = `${teamGameText.trim()} | ${betText.trim()}`;
+      const sportTag = sport && sport !== 'other' ? ` (${sport.toUpperCase()})` : '';
+      actualPickText = `${basePickText}${sportTag}`.trim();
     }
     
     // Get the player's calculated division
@@ -323,13 +371,14 @@ export default function Picks() {
       const response = await fetch('/api/submit-pick', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+          body: JSON.stringify({
           sheet: `Season ${currentSeason}`,
-          week: currentWeek,
+          week: submissionWeek,
           playerName: player?.name || '',
           betAmount: playerBetAmount,
-          pickText: actualPickText,
-          division: playerDivision
+            pickText: actualPickText,
+            division: playerDivision,
+            sport: !isTail && !isReverse && sport && sport !== 'other' ? sport : undefined
         })
       });
       
@@ -362,7 +411,8 @@ export default function Picks() {
     }
 
     // Reset
-    setPickText('');
+    setTeamGameText('');
+    setBetText('');
     setIsTail(false);
     setIsReverse(false);
     setSelectedTailPlayer('');
@@ -371,7 +421,7 @@ export default function Picks() {
 
   return (
     <Layout>
-      <div className="space-y-6 max-w-5xl mx-auto">
+      <div className="space-y-6">
         {/* Header Card */}
         <div className="bg-white rounded-lg p-6 shadow-sm border flex flex-col md:flex-row justify-between items-start gap-6">
           <div className="flex items-center gap-4">
@@ -387,7 +437,7 @@ export default function Picks() {
           </div>
           <div className="bg-primary/5 border border-primary/20 rounded-md px-5 py-2.5 md:self-center flex flex-col justify-center items-start md:items-end">
              <span className="font-bold text-foreground/80 text-xs tracking-wider leading-tight mb-0.5">Week #{submissionWeek} Deadline</span>
-             <span className="text-muted-foreground font-medium text-xs tracking-wider leading-tight">{deadline}</span>
+             <span className="text-muted-foreground font-medium text-xs tracking-wider leading-tight">{deadlineDisplay}</span>
           </div>
         </div>
 
@@ -402,7 +452,7 @@ export default function Picks() {
                   <SelectValue placeholder="Choose your player" />
                 </SelectTrigger>
                 <SelectContent className="max-h-64 overflow-y-auto">
-                  {playersWithDivisions.map(p => {
+                  {availablePlayers.map(p => {
                     const betAmount = getPlayerBetAmount(p.id);
                     const isDivisionLegends = p.calculatedDivision === 'Legends';
                     return (
@@ -432,11 +482,21 @@ export default function Picks() {
 
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2 md:col-span-2">
-                <Label>Team & Spread/Total</Label>
+                <Label>Team / Game</Label>
                 <Input 
-                  placeholder="e.g., Lakers -4.5, Over 215.5" 
-                  value={pickText}
-                  onChange={(e) => setPickText(e.target.value)}
+                  placeholder="e.g., Lakers at Suns" 
+                  value={teamGameText}
+                  onChange={(e) => setTeamGameText(e.target.value)}
+                  disabled={isSelectedPlayerForcedTail}
+                />
+              </div>
+
+              <div className="space-y-2 md:col-span-2">
+                <Label>Bet (Spread or Total)</Label>
+                <Input 
+                  placeholder="e.g., -4.5, +3, Over 215.5" 
+                  value={betText}
+                  onChange={(e) => setBetText(e.target.value)}
                   disabled={isSelectedPlayerForcedTail}
                 />
               </div>
@@ -444,7 +504,7 @@ export default function Picks() {
               <div className="space-y-2">
                 <Label>Sport</Label>
                 <Select
-                  value={sport}
+                  value={sport || undefined}
                   onValueChange={(value) => setSport(value as SportOption)}
                   disabled={isTail || isReverse || isSelectedPlayerForcedTail}
                 >
@@ -452,9 +512,9 @@ export default function Picks() {
                     <SelectValue placeholder="Select sport" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="ncaaf">College Football</SelectItem>
+                    <SelectItem value="ncaaf">NCAAF</SelectItem>
                     <SelectItem value="nfl">NFL</SelectItem>
-                    <SelectItem value="ncaab">College Basketball</SelectItem>
+                    <SelectItem value="ncaab">NCAAB</SelectItem>
                     <SelectItem value="nba">NBA</SelectItem>
                     <SelectItem value="mlb">MLB</SelectItem>
                     <SelectItem value="nhl">NHL</SelectItem>

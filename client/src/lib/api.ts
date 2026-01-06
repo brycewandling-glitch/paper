@@ -8,6 +8,8 @@ export type SeasonStats = {
   longestWinStreak: { player: string; length: number };
   longestLoseStreak: { player: string; length: number };
   longestPushStreak?: { player: string; length: number };
+  seasonWinnings?: number; // Total winnings for the season
+  perPlayerWinnings?: number; // Winnings per player
 };
 
 export type SeasonData = {
@@ -26,6 +28,52 @@ function normalizeKey(k: string) {
 }
 
 type WeeklyRow = Record<string, any>;
+
+function normalizeResolvedDescription(raw: string | undefined | null): string | undefined {
+  if (!raw) return undefined;
+  let text = String(raw).trim();
+  if (!text) return undefined;
+  if (/^(tail|reverse tail)/i.test(text)) {
+    return text;
+  }
+
+  const trailingMeta = /\s*\((?:legends|leaders|nfl|nba|mlb|nhl|ncaaf|cfb|ncaab|cbb)\)\s*$/i;
+  while (trailingMeta.test(text)) {
+    text = text.replace(trailingMeta, '').trim();
+  }
+
+  if (text.includes('|')) {
+    const rawParts = text.split('|').map(part => part.trim()).filter(Boolean);
+    if (rawParts.length >= 2) {
+      const [gamePart, betPart] = rawParts;
+      if (gamePart && betPart) {
+        text = `${gamePart} ${betPart}`;
+      }
+    }
+  }
+
+  const hasWrappedOverUnder = /\((?:over|under)\b/i.test(text);
+  const overUnderMatch = text.match(/(.+?)\s+(over|under)\s*(\d+\.?\d*)$/i);
+  if (overUnderMatch && !hasWrappedOverUnder) {
+    const base = overUnderMatch[1].trim();
+    const type = overUnderMatch[2].toLowerCase().startsWith('o') ? 'Over' : 'Under';
+    const total = overUnderMatch[3];
+    text = `${base} (${type} ${total})`;
+  } else {
+    const hasWrappedSpread = /\([^)]*[+-]?\d+(?:\.\d+)?/i.test(text);
+    const spreadMatch = text.match(/(.+?)\s+([+-]?\d+(?:\.\d+)?)$/);
+    if (spreadMatch && !hasWrappedSpread) {
+      const base = spreadMatch[1].trim();
+      const spreadNumber = Number(spreadMatch[2]);
+      if (!Number.isNaN(spreadNumber) && base) {
+        const spreadLabel = spreadNumber > 0 ? `+${spreadNumber}` : `${spreadNumber}`;
+        text = `${base} (${base} ${spreadLabel})`;
+      }
+    }
+  }
+
+  return text || undefined;
+}
 
 function computeStreak(results: string[]): string {
   // results is most-recent-first array like ['W','W','L','W']
@@ -51,6 +99,35 @@ function computeStreak(results: string[]): string {
     }
   }
   return `${current ?? 'W'}${count}`;
+}
+
+// Fetch total payouts per player from the "Payouts" sheet
+async function fetchPlayerPayouts(): Promise<Map<string, number>> {
+  const payoutMap = new Map<string, number>();
+  try {
+    const res = await fetch(`/api/data?sheet=${encodeURIComponent('Payouts')}`);
+    if (!res.ok) return payoutMap;
+    const rows = await res.json() as WeeklyRow[];
+    if (!rows || rows.length === 0) return payoutMap;
+    
+    // Get headers (first row keys) - first column is Date, rest are player names
+    const headers = Object.keys(rows[0]);
+    const playerColumns = headers.filter(h => !/^date$/i.test(h.trim()));
+    
+    // Sum up all payouts for each player
+    for (const row of rows) {
+      for (const playerName of playerColumns) {
+        const value = parseNumber(row[playerName], 0);
+        if (value !== 0) {
+          const current = payoutMap.get(playerName) || 0;
+          payoutMap.set(playerName, current + value);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Error fetching payouts:', e);
+  }
+  return payoutMap;
 }
 
 export async function fetchSeasonPlayers(sheetName = 'Season 1', winPctIncludePushes = false): Promise<Player[]> {
@@ -441,6 +518,10 @@ export async function fetchSeasonData(sheetName = 'Season 1', winPctIncludePushe
   };
   const excluded = excludedPlayers[sheetName] || [];
   const activePlayers = playersDefs.filter(pd => !excluded.includes(pd.name));
+  const activePlayerCount = activePlayers.length;
+
+  // Find Payout column to calculate season winnings from the sheet data
+  const payoutKey = headers.find(h => /^payout$/i.test(h.trim())) || null;
 
   // Calculate stats
   let parlaysHit = 0;
@@ -451,6 +532,7 @@ export async function fetchSeasonData(sheetName = 'Season 1', winPctIncludePushe
   let seasonWins = 0;
   let bestWin = { player: '', length: 0 };
   let bestLose = { player: '', length: 0 };
+  let totalPayouts = 0;
 
   // Check each week for division wins and parlay hits
   for (const row of rows) {
@@ -501,6 +583,17 @@ export async function fetchSeasonData(sheetName = 'Season 1', winPctIncludePushe
     if (hasData) {
       completedWeeks++;
       
+      // Accumulate payout for this week if present
+      if (payoutKey) {
+        const payoutVal = row[payoutKey];
+        if (payoutVal !== null && payoutVal !== undefined && payoutVal !== '') {
+          const payout = parseNumber(payoutVal, 0);
+          if (payout > 0) {
+            totalPayouts += payout;
+          }
+        }
+      }
+      
       // For Season 4, parlay hit = either division has all wins/pushes
       // For earlier seasons, parlay hit = all players won or pushed
       if (sheetName === 'Season 4') {
@@ -545,6 +638,10 @@ export async function fetchSeasonData(sheetName = 'Season 1', winPctIncludePushe
   const totalBets = totalWins + totalLosses;
   const overallWinPercentage = totalBets > 0 ? Math.round((totalWins / totalBets) * 1000) / 10 : 0;
 
+  // Calculate per-player winnings from total payouts
+  const totalSeasonWinnings = totalPayouts > 0 ? totalPayouts : undefined;
+  const perPlayerWinnings = totalPayouts > 0 && activePlayerCount > 0 ? totalPayouts / activePlayerCount : undefined;
+
   return {
     players,
     stats: {
@@ -554,13 +651,15 @@ export async function fetchSeasonData(sheetName = 'Season 1', winPctIncludePushe
       seasonWins,
       longestWinStreak: bestWin,
       longestLoseStreak: bestLose,
-      longestPushStreak: { player: '', length: 0 }
+      longestPushStreak: { player: '', length: 0 },
+      seasonWinnings: totalSeasonWinnings,
+      perPlayerWinnings
     }
   };
 }
 
 export async function fetchPicksByWeek(sheetName = 'Season 1', weekNumber: number): Promise<Pick[]> {
-  const res = await fetch(`/api/data?sheet=${encodeURIComponent(sheetName)}`);
+  const res = await fetch(`/api/data?sheet=${encodeURIComponent(sheetName)}&week=${encodeURIComponent(String(weekNumber))}`);
   if (!res.ok) {
     const txt = await res.text();
     throw new Error(`Failed to fetch sheet data: ${res.status} ${txt}`);
@@ -642,7 +741,8 @@ export async function fetchPicksByWeek(sheetName = 'Season 1', weekNumber: numbe
     const teamDesc = pd.altBetKey ? String(targetRow[pd.altBetKey] ?? '').trim() : '';
     
     // Get the resolved team/game name from the Resolved column
-    const resolvedTeam = pd.resolvedKey ? String(targetRow[pd.resolvedKey] ?? '').trim() : '';
+    const resolvedTeamRaw = pd.resolvedKey ? String(targetRow[pd.resolvedKey] ?? '').trim() : '';
+    const resolvedTeam = normalizeResolvedDescription(resolvedTeamRaw);
 
     const resVal = pd.resultKey ? String(targetRow[pd.resultKey] ?? '').trim().toUpperCase() : '';
     let result: Pick['result'] = 'Pending';
@@ -655,7 +755,7 @@ export async function fetchPicksByWeek(sheetName = 'Season 1', weekNumber: numbe
       week: Number(weekNumber),
       playerId: player.id,
       team: teamDesc || '',
-      resolvedTeam: resolvedTeam || undefined,
+      resolvedTeam,
       odds: '',
       amount: amt,
       result,
@@ -737,6 +837,131 @@ export async function fetchPicksByWeek(sheetName = 'Season 1', weekNumber: numbe
   return picks;
 }
 
+export async function fetchNextBetAmounts(
+  sheetName = 'Season 1',
+  targetWeek?: number,
+  playersCache?: Player[]
+): Promise<Record<number, number>> {
+  const res = await fetch(`/api/data?sheet=${encodeURIComponent(sheetName)}`);
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`Failed to fetch sheet data: ${res.status} ${txt}`);
+  }
+
+  const rows: WeeklyRow[] = await res.json();
+  if (!rows || rows.length === 0) return {};
+
+  const headers = Object.keys(rows[0]);
+  const weekKey = headers.find(h => /week/i.test(h)) || null;
+
+  const playersDefMap = new Map<string, { name: string; resultKey: string | null }>();
+  const headerSet = new Set(headers.map(h => h.trim()));
+
+  const upsertPlayerDef = (name: string, resultKey: string | null) => {
+    const key = name.toLowerCase();
+    const existing = playersDefMap.get(key);
+    if (existing) {
+      if (!existing.resultKey && resultKey) {
+        existing.resultKey = resultKey;
+      }
+      return;
+    }
+    playersDefMap.set(key, { name, resultKey });
+  };
+
+  for (const h of headers) {
+    const match = h.match(/(.+)\s+Win\/Lose\/Push/i);
+    if (match) {
+      upsertPlayerDef(match[1].trim(), h);
+      continue;
+    }
+
+    const betMatch = h.match(/(.+)\s+Bet Amount/i);
+    if (betMatch) {
+      const name = betMatch[1].trim();
+      const possibleResult = `${name} Win/Lose/Push`;
+      const resultKey = headerSet.has(possibleResult)
+        ? possibleResult
+        : headers.find(x => {
+            const lower = x.toLowerCase();
+            const nameLower = name.toLowerCase();
+            return lower.startsWith(nameLower) && /win|lose|push/.test(lower);
+          }) || null;
+      upsertPlayerDef(name, resultKey);
+    }
+  }
+
+  const playersDefs = Array.from(playersDefMap.values());
+
+  const seasonPlayers = playersCache && playersCache.length > 0
+    ? playersCache
+    : await fetchSeasonPlayers(sheetName);
+  const playerIdByName = new Map<string, number>();
+  seasonPlayers.forEach(player => {
+    playerIdByName.set(player.name.toLowerCase(), player.id);
+  });
+
+  type ChronologicalRow = { week: number; row: WeeklyRow };
+  const chronologicalRows: ChronologicalRow[] = [];
+
+  rows.forEach((row, idx) => {
+    let weekNumber: number | null = null;
+    if (weekKey) {
+      const rawWeek = row[weekKey];
+      if (typeof rawWeek === 'number' && Number.isFinite(rawWeek)) {
+        weekNumber = rawWeek;
+      } else if (rawWeek !== null && rawWeek !== undefined && rawWeek !== '') {
+        const parsed = Number(String(rawWeek).replace(/[^0-9]/g, ''));
+        if (Number.isFinite(parsed) && parsed > 0) {
+          weekNumber = parsed;
+        }
+      }
+    } else {
+      weekNumber = idx + 1;
+    }
+
+    if (weekNumber !== null && weekNumber > 0) {
+      chronologicalRows.push({ week: weekNumber, row });
+    }
+  });
+
+  chronologicalRows.sort((a, b) => a.week - b.week);
+
+  const nextAmounts: Record<number, number> = {};
+  const baseAmount = 5;
+  const increment = 5;
+  const maxAmount = 25;
+  const limitWeek = targetWeek && Number.isFinite(targetWeek) ? targetWeek : undefined;
+
+  for (const pd of playersDefs) {
+    const playerId = playerIdByName.get(pd.name.toLowerCase());
+    if (!playerId) continue;
+
+    let nextAmount = baseAmount;
+
+    for (const entry of chronologicalRows) {
+      if (limitWeek && entry.week >= limitWeek) break;
+      if (!pd.resultKey) continue;
+      const rawResult = entry.row[pd.resultKey];
+      if (rawResult === null || rawResult === undefined || rawResult === '') continue;
+      const code = String(rawResult).trim().toUpperCase();
+      if (!code) continue;
+
+      if (code.startsWith('W')) {
+        nextAmount = baseAmount;
+      } else if (code.startsWith('L')) {
+        nextAmount = Math.min(nextAmount + increment, maxAmount);
+      } else if (code.startsWith('P')) {
+        // Push keeps the same amount
+      }
+    }
+
+    nextAmounts[playerId] = nextAmount;
+  }
+
+  return nextAmounts;
+}
+
 export async function syncPickResultToSheet(params: {
   sheetName: string;
   weekNumber: number;
@@ -772,15 +997,29 @@ export async function fetchSeasonWeekCount(sheetName = 'Season 1'): Promise<numb
   // Try to find a date column header (e.g. 'Date' or 'Game Date')
   const headers = Object.keys(rows[0]);
   const dateKey = headers.find(h => /\bdate\b|game date|game_date/i.test(h));
-  if (!dateKey) {
-    // no explicit date column — fall back to reporting number of rows
+  const weekKey = headers.find(h => /^week$/i.test(h.trim()));
+  if (!dateKey && !weekKey) {
+    // no explicit date/week column — fall back to reporting number of rows
     return rows.length;
   }
 
   const today = new Date();
   // Count rows where the date cell is present and <= today
   let count = 0;
+  let maxWeek = 0;
   for (const row of rows) {
+    if (weekKey) {
+      const weekVal = row[weekKey];
+      const parsedWeek = typeof weekVal === 'number'
+        ? weekVal
+        : Number(String(weekVal ?? '').replace(/[^0-9]/g, ''));
+      if (!Number.isNaN(parsedWeek) && parsedWeek > maxWeek) {
+        maxWeek = parsedWeek;
+      }
+    }
+
+    if (!dateKey) continue;
+
     const raw = row[dateKey];
     if (raw === undefined || raw === null || String(raw).trim() === '') continue;
     // Try to parse date intelligently
@@ -810,14 +1049,67 @@ export async function fetchSeasonWeekCount(sheetName = 'Season 1'): Promise<numb
   }
 
   // If no dated rows are <= today, fall back to rows.length to avoid hiding weeks
-  return count > 0 ? count : rows.length;
+  const fallback = rows.length;
+  const datedCount = count > 0 ? count : fallback;
+  return Math.max(datedCount, maxWeek);
+}
+
+function parseDateCell(raw: any): Date | null {
+  if (raw === undefined || raw === null) return null;
+  const str = String(raw).trim();
+  if (!str) return null;
+  const parsed = Date.parse(str);
+  if (!Number.isNaN(parsed)) return new Date(parsed);
+  const match = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (match) {
+    const month = Number(match[1]) - 1;
+    const day = Number(match[2]);
+    let year = Number(match[3]);
+    if (year < 100) year += 2000;
+    return new Date(year, month, day);
+  }
+  return null;
+}
+
+export async function fetchWeekDeadline(sheetName = 'Season 1', weekNumber: number): Promise<string | null> {
+  if (!weekNumber || weekNumber < 1) return null;
+  const res = await fetch(`/api/data?sheet=${encodeURIComponent(sheetName)}`);
+  if (!res.ok) {
+    return null;
+  }
+  const rows: WeeklyRow[] = await res.json();
+  if (!rows || rows.length === 0) return null;
+
+  const headers = Object.keys(rows[0]);
+  const weekKey = headers.find(h => /^week$/i.test(h.trim()));
+  const dateKey = headers.find(h => /\bdate\b|game date|game_date|deadline/i.test(h));
+  if (!weekKey || !dateKey) return null;
+
+  const targetRow = rows.find(row => {
+    const value = row[weekKey];
+    const numeric = typeof value === 'number'
+      ? value
+      : Number(String(value ?? '').replace(/[^0-9]/g, ''));
+    return numeric === weekNumber;
+  });
+  if (!targetRow) return null;
+
+  const parsed = parseDateCell(targetRow[dateKey]);
+  if (!parsed) return null;
+
+  parsed.setHours(22, 0, 0, 0);
+  return parsed.toLocaleDateString('en-US', {
+    weekday: 'long',
+    month: 'short',
+    day: 'numeric'
+  }) + ' @ 10:00 PM';
 }
 
 export async function fetchAllTimePlayers(winPctIncludePushes = false): Promise<Player[]> {
   // Fetch all seasons in parallel
   const seasons = ['Season 1', 'Season 2', 'Season 3', 'Season 4'];
   const allSeasonData = await Promise.all(
-    seasons.map(season => fetchSeasonPlayers(season, winPctIncludePushes).catch(() => []))
+    seasons.map(season => fetchSeasonData(season, winPctIncludePushes).catch(() => ({ players: [], stats: { parlaysHit: 0, overallWinPercentage: 0, totalWeeks: 0, seasonWins: 0, longestWinStreak: { player: '', length: 0 }, longestLoseStreak: { player: '', length: 0 } } })))
   );
 
   // Aggregate by player name
@@ -827,16 +1119,22 @@ export async function fetchAllTimePlayers(winPctIncludePushes = false): Promise<
     losses: number;
     pushes: number;
     allResults: string[];
+    allTimeNet: number;
   }>();
 
-  for (const seasonPlayers of allSeasonData) {
-    for (const player of seasonPlayers) {
+  for (const seasonData of allSeasonData) {
+    const perPlayerPayout = seasonData.stats.perPlayerWinnings ?? 0;
+    for (const player of seasonData.players) {
+      // Calculate this player's net for this season
+      const seasonNet = perPlayerPayout - player.seasonBetTotal;
+      
       const existing = playerMap.get(player.name);
       if (existing) {
         existing.totalBet += player.seasonBetTotal;
         existing.wins += player.wins;
         existing.losses += player.losses;
         existing.pushes += player.pushes;
+        existing.allTimeNet += seasonNet;
         // Add results for this season to the all-time results
         const [w, l, p] = player.seasonRecord.split('-').map(Number);
         for (let i = 0; i < w; i++) existing.allResults.push('W');
@@ -848,7 +1146,8 @@ export async function fetchAllTimePlayers(winPctIncludePushes = false): Promise<
           wins: player.wins,
           losses: player.losses,
           pushes: player.pushes,
-          allResults: []
+          allResults: [],
+          allTimeNet: seasonNet
         });
         // Initialize with current season results
         const [w, l, p] = player.seasonRecord.split('-').map(Number);
@@ -860,6 +1159,9 @@ export async function fetchAllTimePlayers(winPctIncludePushes = false): Promise<
     }
   }
 
+  // Fetch payouts to calculate balance
+  const payoutsMap = await fetchPlayerPayouts();
+
   // Convert map to Player array
   const allTimePlayers: Player[] = Array.from(playerMap.entries()).map(([name, data], idx) => {
     const winDenom = winPctIncludePushes ? (data.wins + data.losses + data.pushes) : (data.wins + data.losses);
@@ -868,6 +1170,10 @@ export async function fetchAllTimePlayers(winPctIncludePushes = false): Promise<
     // Note: For all-time, we don't have a meaningful "current streak" across seasons
     // We'll use the most recent season's streak or compute from all results
     const streak = computeStreak(data.allResults.slice(-20).reverse());
+
+    // Calculate balance: allTimeNet - total payouts received
+    const totalPayouts = payoutsMap.get(name) || 0;
+    const balance = data.allTimeNet - totalPayouts;
 
     return {
       id: idx + 1,
@@ -879,7 +1185,9 @@ export async function fetchAllTimePlayers(winPctIncludePushes = false): Promise<
       losses: data.losses,
       pushes: data.pushes,
       winPercentage: winPct,
-      currentStreak: streak
+      currentStreak: streak,
+      allTimeNet: data.allTimeNet,
+      balance
     } as Player;
   });
 
@@ -902,11 +1210,13 @@ export async function fetchAllTimeData(winPctIncludePushes = false): Promise<Sea
   let totalWins = 0;
   let totalLosses = 0;
   let totalWeeks = 0;
+  let totalSeasonWinnings = 0;
 
   for (const seasonData of allSeasonData) {
     totalParlaysHit += seasonData.stats.parlaysHit;
     totalSeasonWins += seasonData.stats.seasonWins;
     totalWeeks += seasonData.stats.totalWeeks;
+    totalSeasonWinnings += seasonData.stats.seasonWinnings ?? 0;
     // Calculate wins/losses from players in each season
     for (const player of seasonData.players) {
       totalWins += player.wins;
@@ -1045,7 +1355,8 @@ export async function fetchAllTimeData(winPctIncludePushes = false): Promise<Sea
       seasonWins: totalSeasonWins,
       longestWinStreak,
       longestLoseStreak,
-      longestPushStreak
+      longestPushStreak,
+      seasonWinnings: totalSeasonWinnings
     }
   };
 }
@@ -1279,20 +1590,52 @@ export interface GameDetails {
   broadcasts: string[];
   status: 'scheduled' | 'live' | 'final';
   statusDetail: string;
+  displayClock?: string;
+  clockSeconds?: number;
+  period?: number;
+  regulationPeriods?: number;
+  regulationPeriodSeconds?: number;
+  gameProgress?: number;
+  secondsRemaining?: number;
+  possession?: 'home' | 'away';
+  possessionTeamId?: string;
+  possessionText?: string;
   homeScore?: number;
   awayScore?: number;
   spread?: number;
   overUnder?: number;
   favoriteTeam?: string;
+  homeSpreadOdds?: number;
+  awaySpreadOdds?: number;
+  homeMoneylineOdds?: number;
+  awayMoneylineOdds?: number;
   matchedTeam: string;
   resolvedText: string;
+  winProbability?: number;
+  probabilitySource?: 'espn' | 'heuristic';
+  winConfidence?: 'likely_win' | 'coin_flip' | 'likely_loss';
+  coverMargin?: number;
+  projectedTotal?: number;
+  betType?: 'spread' | 'total' | 'moneyline';
 }
 
-export async function fetchGameDetails(resolvedText: string, sport: string = 'nfl'): Promise<GameDetails | null> {
+export async function fetchGameDetails(
+  resolvedText: string,
+  sport: string = 'nfl',
+  options?: { sheet?: string; week?: number; pickText?: string }
+): Promise<GameDetails | null> {
   if (!resolvedText) return null;
   
   try {
-    const res = await fetch(`/api/game-details?resolved=${encodeURIComponent(resolvedText)}&sport=${encodeURIComponent(sport)}`);
+    const params = new URLSearchParams({
+      resolved: resolvedText,
+      sport,
+    });
+    if (options?.sheet) params.set('sheet', options.sheet);
+    if (options?.week !== undefined) params.set('week', String(options.week));
+    if (options?.pickText) params.set('pickText', options.pickText);
+
+    const res = await fetch(`/api/game-details?${params.toString()}`);
     if (!res.ok) {
       console.error('Failed to fetch game details:', res.status);
       return null;

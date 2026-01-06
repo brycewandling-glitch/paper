@@ -27,14 +27,14 @@ export default function Standings() {
   if (isLoading) {
     return (
       <Layout>
-        <div className="max-w-5xl mx-auto p-6">Loading Season 1 data...</div>
+        <div className="p-6">Loading Season 1 data...</div>
       </Layout>
     );
   }
 
   return (
     <Layout>
-      <div className="space-y-6 max-w-5xl mx-auto">
+      <div className="space-y-6">
         {/* Header Card */}
         <div className="bg-white rounded-lg p-6 shadow-sm border flex flex-col md:flex-row justify-between items-start gap-6 relative">
           <div className="flex items-center gap-4">
@@ -141,14 +141,26 @@ export default function Standings() {
 
         {/* Season Stats Footer */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-6 justify-center">
-          <div className="lg:col-span-2 bg-white rounded-lg p-4 shadow-sm border border-border flex flex-col items-center justify-center">
+          <div className="bg-white rounded-lg p-4 shadow-sm border border-border flex flex-col items-center justify-center">
             <span className="text-xs uppercase tracking-widest text-muted-foreground font-bold mb-1">Season Bets</span>
             <span className="text-3xl font-bold text-foreground">{stats.totalWeeks * 2}</span>
           </div>
-          <div className="lg:col-span-2 bg-emerald-50 rounded-lg p-4 shadow-sm border border-emerald-100 flex flex-col items-center justify-center">
+          <div className="bg-emerald-50 rounded-lg p-4 shadow-sm border border-emerald-100 flex flex-col items-center justify-center">
             <span className="text-xs uppercase tracking-widest text-emerald-700 font-bold mb-1">Season Wins</span>
             <span className="text-3xl font-bold text-emerald-800">{stats.seasonWins}</span>
           </div>
+          {stats.seasonWinnings !== undefined && (
+            <div className="bg-emerald-50 rounded-lg p-4 shadow-sm border border-emerald-200 flex flex-col items-center justify-center">
+              <span className="text-xs uppercase tracking-widest text-emerald-700 font-bold mb-1">Total Winnings</span>
+              <span className="text-3xl font-bold text-emerald-800">${stats.seasonWinnings.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+          )}
+          {stats.perPlayerWinnings !== undefined && (
+            <div className="bg-emerald-50 rounded-lg p-4 shadow-sm border border-emerald-200 flex flex-col items-center justify-center">
+              <span className="text-xs uppercase tracking-widest text-emerald-700 font-bold mb-1">Per Player</span>
+              <span className="text-3xl font-bold text-emerald-800">${stats.perPlayerWinnings.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+          )}
         </div>
 
         {/* Longest Streaks */}

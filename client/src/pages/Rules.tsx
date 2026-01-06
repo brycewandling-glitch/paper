@@ -5,7 +5,7 @@ import { BookOpen } from 'lucide-react';
 export default function Rules() {
   return (
     <Layout>
-      <div className="space-y-8 max-w-5xl mx-auto">
+      <div className="space-y-8">
         {/* Header Card */}
         <div className="bg-white rounded-lg p-6 shadow-sm border flex flex-col md:flex-row justify-between items-start gap-6 relative">
           <div className="flex items-center gap-4">

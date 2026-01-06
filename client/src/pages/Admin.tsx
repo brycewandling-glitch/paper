@@ -103,7 +103,7 @@ export default function Admin() {
 
   return (
     <Layout>
-      <div className="space-y-8 max-w-5xl mx-auto">
+      <div className="space-y-8">
         <div className="flex justify-between items-center">
           <div className="flex items-center gap-4">
             <ShieldCheck className="h-10 w-10 text-primary" strokeWidth={2} />

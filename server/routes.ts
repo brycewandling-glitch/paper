@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { getSheetData, appendToSheet, getSheetRawValues, updateSheetValues, updateSheetCellValue } from "./googleSheets";
 import { resolvePickToGameServer } from './pickResolver';
 import { resolvePickFromESPN, getWeekDate, lookupGameByResolvedText, detectSport, type GameDetails } from './espnResolver';
+import { ensureWeekRowExists } from './weekManager';
 
 export async function registerRoutes(
   httpServer: Server,
@@ -12,7 +13,13 @@ export async function registerRoutes(
   // Get data from Google Sheet
   app.get("/api/data", async (req, res) => {
     try {
-      const sheet = typeof req.query.sheet === "string" ? req.query.sheet : undefined;
+      const sheet = typeof req.query.sheet === "string" ? req.query.sheet : "Season 4";
+      const ensureWeekRaw = typeof req.query.ensureWeek === 'string'
+        ? req.query.ensureWeek
+        : (typeof req.query.week === 'string' ? req.query.week : undefined);
+      const ensureWeekParam = ensureWeekRaw !== undefined ? Number(ensureWeekRaw) : undefined;
+      const ensureWeek = Number.isFinite(ensureWeekParam) ? ensureWeekParam : undefined;
+      await ensureWeekRowExists({ sheetName: sheet, targetWeek: ensureWeek });
       const data = await getSheetData(sheet);
       res.json(data);
     } catch (error) {
@@ -61,18 +68,22 @@ export async function registerRoutes(
       const playerName = req.body?.playerName;
       const betAmount = req.body?.betAmount;
       const pickText = req.body?.pickText; // The actual pick/bet text
-      const weekNumber = req.body?.week;
+      const weekNumber = Number(req.body?.week);
       const division = req.body?.division; // legends or leaders
       const isTail = req.body?.isTail; // Is this a tail pick?
       const isReverseTail = req.body?.isReverseTail; // Is this a reverse tail?
       const tailedPlayerName = req.body?.tailedPlayerName; // Name of player being tailed/faded
+      const bodySport = typeof req.body?.sport === 'string' ? req.body.sport.trim().toLowerCase() : undefined;
+      const providedSport = bodySport && bodySport !== 'other' ? bodySport : undefined;
       
-      if (!playerName || betAmount === undefined || !pickText || !weekNumber) {
+      if (!playerName || betAmount === undefined || !pickText || Number.isNaN(weekNumber) || weekNumber <= 0) {
         return res.status(400).json({ error: "Missing required fields: playerName, betAmount, pickText, week" });
       }
 
-      // Fetch raw values
-      const raw = await getSheetRawValues(String(sheet));
+      const sheetName = String(sheet);
+
+      // Ensure the new week exists (creates it once the Monday threshold is met)
+      const raw = await ensureWeekRowExists({ sheetName, targetWeek: weekNumber });
       if (!raw || raw.length === 0) {
         return res.status(400).json({ error: "Empty sheet" });
       }
@@ -147,14 +158,14 @@ export async function registerRoutes(
         else {
           try {
             // Get the week's date from the sheet data
-            const seasonData = await getSheetData(String(sheet));
+            const seasonData = await getSheetData(sheetName);
             const weekDate = await getWeekDate(seasonData, weekNumber);
             
             if (weekDate) {
               console.log(`[submit-pick] Resolving pick "${pickText}" for week ${weekNumber}, date: ${weekDate.toDateString()}`);
               
               // Try ESPN resolver first
-              const espnResult = await resolvePickFromESPN(weekDate, pickText);
+              const espnResult = await resolvePickFromESPN(weekDate, pickText, providedSport);
               
               if (espnResult) {
                 resolvedText = espnResult.resolvedText;
@@ -168,7 +179,7 @@ export async function registerRoutes(
           // If ESPN didn't find it, try the local schedule resolver
           if (!resolvedText) {
             try {
-              const candidates = await resolvePickToGameServer(String(sheet), weekNumber, formattedPick, null);
+              const candidates = await resolvePickToGameServer(sheetName, weekNumber, formattedPick, null);
               if (candidates && candidates.length > 0) {
                 const c = candidates[0];
                 const home = c.home ?? '';
@@ -192,25 +203,46 @@ export async function registerRoutes(
           
           // If still no resolution, create a formatted resolved text from pick
           if (!resolvedText) {
-            let cleanPick = pickText.replace(/\s*\((legends|leaders)\)\s*/gi, '').trim();
+            let cleanPick = pickText
+              .replace(/\s*\((legends|leaders)\)\s*/gi, '')
+              .replace(/\s*\((nfl|nba|mlb|nhl|ncaaf|cfb|ncaab|cbb)\)\s*/gi, '')
+              .replace(/\s*\|\s*/g, ' ')
+              .trim();
             
-            const spreadMatch = cleanPick.match(/(.+?)\s*([+-]?\d+\.?\d*)\s*$/);
-            const overUnderMatch = cleanPick.match(/(.+?)\s*(over|under|o|u)\s*(\d+\.?\d*)\s*$/i);
+            // Handle duplicate over/under (e.g., "team over over 53.5" -> "team over 53.5")
+            cleanPick = cleanPick.replace(/\b(over|under)\s+(over|under)\s+/gi, '$2 ');
             
-            if (overUnderMatch) {
-              const team = overUnderMatch[1].trim();
-              const type = overUnderMatch[2].toLowerCase().startsWith('o') ? 'Over' : 'Under';
-              const total = overUnderMatch[3];
-              resolvedText = `${team} (${type} ${total})`;
-            } else if (spreadMatch) {
-              const team = spreadMatch[1].trim();
-              const spread = spreadMatch[2];
-              const spreadNum = parseFloat(spread);
-              const spreadStr = spreadNum > 0 ? `+${spread}` : spread;
-              resolvedText = `${team} (${team} ${spreadStr})`;
+            // Check for two-team picks with slash (e.g., "Montana/Montana St over 53.5")
+            const twoTeamMatch = cleanPick.match(/^(.+?)\/(.+?)\s+(over|under)\s*(\d+\.?\d*)?\s*$/i);
+            if (twoTeamMatch) {
+              const team1 = twoTeamMatch[1].trim();
+              const team2 = twoTeamMatch[2].trim();
+              const ouType = twoTeamMatch[3].toLowerCase().startsWith('o') ? 'Over' : 'Under';
+              const total = twoTeamMatch[4];
+              if (total) {
+                resolvedText = `${team1} @ ${team2} (${ouType} ${total})`;
+              } else {
+                resolvedText = `${team1} @ ${team2} (${ouType})`;
+              }
             } else {
-              // Just use the clean pick without duplicating it
-              resolvedText = cleanPick;
+              const spreadMatch = cleanPick.match(/(.+?)\s*([+-]?\d+\.?\d*)\s*$/);
+              const overUnderMatch = cleanPick.match(/(.+?)\s*(over|under|o|u)\s*(\d+\.?\d*)\s*$/i);
+              
+              if (overUnderMatch) {
+                const team = overUnderMatch[1].trim();
+                const type = overUnderMatch[2].toLowerCase().startsWith('o') ? 'Over' : 'Under';
+                const total = overUnderMatch[3];
+                resolvedText = `${team} (${type} ${total})`;
+              } else if (spreadMatch) {
+                const team = spreadMatch[1].trim();
+                const spread = spreadMatch[2];
+                const spreadNum = parseFloat(spread);
+                const spreadStr = spreadNum > 0 ? `+${spread}` : spread;
+                resolvedText = `${team} (${team} ${spreadStr})`;
+              } else {
+                // Just use the clean pick without duplicating it
+                resolvedText = cleanPick;
+              }
             }
           }
         }
@@ -222,11 +254,11 @@ export async function registerRoutes(
       const newValues = [headers, ...rows];
       
       // Update the sheet
-      await updateSheetValues(String(sheet), newValues);
+      await updateSheetValues(sheetName, newValues);
       
       res.json({ 
         success: true,
-        sheet, 
+        sheet: sheetName, 
         week: weekNumber, 
         player: playerName,
         betAmount,
@@ -244,17 +276,48 @@ export async function registerRoutes(
   app.get("/api/game-details", async (req, res) => {
     try {
       const resolvedText = typeof req.query.resolved === "string" ? req.query.resolved : "";
-      const sport = typeof req.query.sport === "string" ? req.query.sport : "nfl";
+      const sportParam = typeof req.query.sport === "string" && req.query.sport.trim()
+        ? req.query.sport.trim()
+        : undefined;
+      const lookupSport = sportParam || 'nfl';
+      const sheetName = typeof req.query.sheet === "string" ? req.query.sheet : undefined;
+      const pickText = typeof req.query.pickText === "string" ? req.query.pickText : undefined;
+      const weekParam = typeof req.query.week === "string" || typeof req.query.week === "number"
+        ? Number(req.query.week)
+        : undefined;
       
       if (!resolvedText) {
         return res.status(400).json({ error: "Missing 'resolved' query parameter" });
       }
       
-      console.log(`[game-details] Looking up: "${resolvedText}" (sport: ${sport})`);
+      console.log(`[game-details] Looking up: "${resolvedText}" (sport: ${lookupSport})`);
       
-      const gameDetails = await lookupGameByResolvedText(resolvedText, sport);
+      let gameDetails: GameDetails | null = null;
+      const hasMatchupFormatting = /@/.test(resolvedText);
       
+      if (hasMatchupFormatting) {
+        gameDetails = await lookupGameByResolvedText(resolvedText, lookupSport, pickText);
+      }
+
+      const hasValidWeek = typeof weekParam === 'number' && Number.isFinite(weekParam) && weekParam > 0;
+
+      if (!gameDetails && sheetName && pickText && hasValidWeek) {
+        try {
+          const sheetData = await getSheetData(sheetName);
+          const weekDate = await getWeekDate(sheetData, weekParam);
+          if (weekDate) {
+            console.log(`[game-details] Fallback ESPN resolve for week ${weekParam} pick "${pickText}"`);
+            gameDetails = await resolvePickFromESPN(weekDate, pickText, sportParam);
+          }
+        } catch (fallbackError) {
+          console.error("[game-details] Fallback resolution failed:", fallbackError);
+        }
+      }
+
       if (gameDetails) {
+        if (gameDetails && typeof gameDetails === 'object' && gameDetails.gameName && gameDetails.gameName.toLowerCase().includes('montana')) {
+          console.log('[DEBUG] Montana GameDetails:', JSON.stringify(gameDetails, null, 2));
+        }
         res.json(gameDetails);
       } else {
         res.status(404).json({ error: "Game not found", resolved: resolvedText });
@@ -269,6 +332,7 @@ export async function registerRoutes(
   app.get("/api/week-picks", async (req, res) => {
     try {
       const sheet = typeof req.query.sheet === "string" ? req.query.sheet : "Season 4";
+      await ensureWeekRowExists({ sheetName: sheet });
       const weekNumber = parseInt(String(req.query.week || "1"));
       
       const data = await getSheetData(sheet);
@@ -333,7 +397,7 @@ export async function registerRoutes(
           try {
             // Detect sport from the resolved text
             const sport = detectSport(resolved);
-            const details = await lookupGameByResolvedText(resolved, sport);
+            const details = await lookupGameByResolvedText(resolved, sport, pickText);
             if (details) {
               gameDetails = details;
             }

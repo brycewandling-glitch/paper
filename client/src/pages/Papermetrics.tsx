@@ -25,7 +25,7 @@ export default function Papermetrics() {
   if (isLoading) {
     return (
       <Layout>
-        <div className="space-y-8 max-w-5xl mx-auto p-6">Loading season data...</div>
+        <div className="space-y-8 p-6">Loading season data...</div>
       </Layout>
     );
   }
@@ -33,7 +33,7 @@ export default function Papermetrics() {
   if (!players || players.length === 0) {
     return (
       <Layout>
-        <div className="space-y-8 max-w-5xl mx-auto p-6">
+        <div className="space-y-8 p-6">
           <div className="bg-white rounded-lg p-6 shadow-sm border">
             <h2 className="text-lg font-bold">No data available</h2>
             <p className="text-sm text-muted-foreground">No player data was found for the selected season. Try a different season or verify the Google Sheet name and permissions.</p>
@@ -56,9 +56,16 @@ export default function Papermetrics() {
   const mostLossesPlayer = [...players].sort((a, b) => b.losses - a.losses)[0];
   const mostPushesPlayer = [...players].sort((a, b) => b.pushes - a.pushes)[0];
 
+  // Calculate total bets and net profit/loss
+  const totalBetAmount = players.reduce((sum, p) => sum + p.seasonBetTotal, 0);
+  const avgPlayerBetTotal = players.length > 0 ? totalBetAmount / players.length : 0;
+  const perPlayerPayout = stats.perPlayerWinnings ?? 0;
+  const netPerPlayerPL = perPlayerPayout - avgPlayerBetTotal;
+  const isPerPlayerPositive = netPerPlayerPL >= 0;
+
   return (
     <Layout>
-      <div className="space-y-8 max-w-5xl mx-auto">
+      <div className="space-y-8">
         {/* Header */}
         <div className="bg-white rounded-lg p-6 shadow-sm border flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
           <div className="flex items-center gap-4">
@@ -101,53 +108,149 @@ export default function Papermetrics() {
             <table className="w-full text-left text-sm table-fixed">
               <thead className="bg-secondary border-b">
                 <tr className="bg-secondary w-full">
-                  <th className="px-2 md:px-4 py-3 font-bold text-muted-foreground uppercase text-[10px] md:text-xs tracking-wider text-center w-[15%] md:w-[20%]">Rank</th>
-                  <th className="px-2 md:px-4 py-3 font-bold text-muted-foreground uppercase text-[10px] md:text-xs tracking-wider text-center w-[25%] md:w-[20%]">Player</th>
-                  <th className="px-2 md:px-4 py-3 font-bold text-muted-foreground uppercase text-[10px] md:text-xs tracking-wider text-center w-[20%]">Record</th>
-                  <th className="px-2 md:px-4 py-3 font-bold text-muted-foreground uppercase text-[10px] md:text-xs tracking-wider text-center w-[20%]">Bet Total</th>
-                  <th className="px-2 md:px-4 py-3 font-bold text-muted-foreground uppercase text-[10px] md:text-xs tracking-wider text-center w-[20%]">Win %</th>
+                  <th className="px-1 md:px-4 py-2 md:py-3 font-bold text-muted-foreground uppercase text-[8px] md:text-xs tracking-wider text-center w-[10%] md:w-[12%]">Rank</th>
+                  <th className="px-1 md:px-4 py-2 md:py-3 font-bold text-muted-foreground uppercase text-[8px] md:text-xs tracking-wider text-center w-[16%] md:w-[18%]">Player</th>
+                  <th className="px-1 md:px-4 py-2 md:py-3 font-bold text-muted-foreground uppercase text-[8px] md:text-xs tracking-wider text-center w-[14%] md:w-[16%]">Record</th>
+                  <th className="px-1 md:px-4 py-2 md:py-3 font-bold text-muted-foreground uppercase text-[8px] md:text-xs tracking-wider text-center w-[12%]">Win %</th>
+                  <th className="px-1 md:px-4 py-2 md:py-3 font-bold text-muted-foreground uppercase text-[8px] md:text-xs tracking-wider text-center w-[14%]">Bet Total</th>
+                  <th className="px-1 md:px-4 py-2 md:py-3 font-bold text-muted-foreground uppercase text-[8px] md:text-xs tracking-wider text-center w-[14%]">Net</th>
+                  {selectedSeason === 'All-Time' && (
+                    <th className="px-1 md:px-4 py-2 md:py-3 font-bold text-muted-foreground uppercase text-[8px] md:text-xs tracking-wider text-center w-[14%]">Balance</th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-border bg-white">
-                {sortedByWin.map((player, index) => (
-                  <tr key={player.id} className="hover:bg-secondary/30 transition-colors group">
-                    <td className="px-2 md:px-4 py-3 font-bold text-muted-foreground text-center text-xs md:text-sm">#{index + 1}</td>
-                    <td className="px-2 md:px-4 py-3 overflow-hidden text-ellipsis whitespace-nowrap text-center">
-                      <div className="font-bold text-foreground text-xs md:text-base truncate">{player.name}</div>
-                    </td>
-                    <td className="px-2 md:px-4 py-3 text-center font-bold text-foreground text-xs md:text-sm">
-                      {player.seasonRecord}
-                    </td>
-                    <td className="px-2 md:px-4 py-3 text-center">
-                      <span className="inline-flex items-center px-1.5 md:px-2.5 py-0.5 rounded-md border border-primary text-primary font-bold text-xs md:text-sm bg-transparent">
-                        ${player.seasonBetTotal}
-                      </span>
-                    </td>
-                    <td className="px-2 md:px-4 py-3 text-center font-bold text-foreground text-xs md:text-sm">
-                      {player.winPercentage.toFixed(1)}%
-                    </td>
-                  </tr>
-                ))}
+                {sortedByWin.map((player, index) => {
+                  // For All-Time, use the pre-calculated allTimeNet; for individual seasons, calculate from perPlayerPayout
+                  const netPL = selectedSeason === 'All-Time' && player.allTimeNet !== undefined
+                    ? player.allTimeNet
+                    : perPlayerPayout - player.seasonBetTotal;
+                  const isPositive = netPL >= 0;
+                  const balance = player.balance ?? 0;
+                  const isBalancePositive = balance >= 0;
+                  return (
+                    <tr key={player.id} className="hover:bg-secondary/30 transition-colors group">
+                      <td className="px-1 md:px-4 py-2 md:py-3 font-bold text-muted-foreground text-center text-[10px] md:text-sm">#{index + 1}</td>
+                      <td className="px-1 md:px-4 py-2 md:py-3 overflow-hidden text-ellipsis whitespace-nowrap text-center">
+                        <div className="font-bold text-foreground text-[10px] md:text-base truncate">{player.name}</div>
+                      </td>
+                      <td className="px-1 md:px-4 py-2 md:py-3 text-center font-bold text-foreground text-[10px] md:text-sm">
+                        {player.seasonRecord}
+                      </td>
+                      <td className="px-1 md:px-4 py-2 md:py-3 text-center font-bold text-foreground text-[10px] md:text-sm">
+                        {player.winPercentage.toFixed(1)}%
+                      </td>
+                      <td className="px-1 md:px-4 py-2 md:py-3 text-center">
+                        <span className="inline-flex items-center px-0.5 md:px-2.5 py-0.5 rounded-md border border-primary text-primary font-bold text-[9px] md:text-sm bg-transparent">
+                          ${player.seasonBetTotal}
+                        </span>
+                      </td>
+                      <td className="px-1 md:px-4 py-2 md:py-3 text-center">
+                        <span className={cn(
+                          "inline-flex items-center px-0.5 md:px-2.5 py-0.5 rounded-md border font-bold text-[9px] md:text-sm",
+                          isPositive 
+                            ? "border-emerald-500 text-emerald-700 bg-emerald-50" 
+                            : "border-rose-500 text-rose-700 bg-rose-50"
+                        )}>
+                          {Math.abs(netPL).toLocaleString('en-US', { style: 'currency', currency: 'USD' })}
+                        </span>
+                      </td>
+                      {selectedSeason === 'All-Time' && (
+                        <td className="px-1 md:px-4 py-2 md:py-3 text-center">
+                          <span className={cn(
+                            "inline-flex items-center px-0.5 md:px-2.5 py-0.5 rounded-md border font-bold text-[9px] md:text-sm",
+                            isBalancePositive 
+                              ? "border-emerald-500 text-emerald-700 bg-emerald-50" 
+                              : "border-rose-500 text-rose-700 bg-rose-50"
+                          )}>
+                            {Math.abs(balance).toLocaleString('en-US', { style: 'currency', currency: 'USD' })}
+                          </span>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
           
           {/* Big Stat Tiles - Moved inside the table box */}
-          <div className="grid gap-4 md:grid-cols-3 p-6 border-t bg-slate-50/30">
-            <div className="flex flex-col items-center justify-center p-4 text-center rounded-lg border bg-white">
-              <span className="text-muted-foreground font-medium uppercase tracking-widest text-xs mb-2">Parlays Hit</span>
-              <span className="text-4xl font-bold text-primary font-heading">{stats.parlaysHit}</span>
-            </div>
-            
-            <div className="flex flex-col items-center justify-center p-4 text-center rounded-lg border bg-white">
-              <span className="text-muted-foreground font-medium uppercase tracking-widest text-xs mb-2">Overall Win %</span>
-              <span className="text-4xl font-bold text-foreground font-heading">{stats.overallWinPercentage.toFixed(1)}%</span>
+          <div className="p-6 border-t bg-slate-50/30 space-y-4">
+            {/* Top row: Parlays Hit, Overall Win %, Total Weeks */}
+            <div className="grid gap-4 grid-cols-1 md:grid-cols-3">
+              <div className="flex flex-col items-center justify-center p-4 text-center rounded-lg border bg-white">
+                <span className="text-muted-foreground font-medium uppercase tracking-widest text-xs mb-2">Parlays Hit</span>
+                <span className="text-4xl font-bold text-primary font-heading">{stats.parlaysHit}</span>
+              </div>
+              
+              <div className="flex flex-col items-center justify-center p-4 text-center rounded-lg border bg-white">
+                <span className="text-muted-foreground font-medium uppercase tracking-widest text-xs mb-2">Overall Win %</span>
+                <span className="text-4xl font-bold text-foreground font-heading">{stats.overallWinPercentage.toFixed(1)}%</span>
+              </div>
+
+              <div className="flex flex-col items-center justify-center p-4 text-center rounded-lg border bg-white">
+                <span className="text-muted-foreground font-medium uppercase tracking-widest text-xs mb-2">Total Weeks</span>
+                <span className="text-4xl font-bold text-foreground font-heading">{stats.totalWeeks}</span>
+              </div>
             </div>
 
-            <div className="flex flex-col items-center justify-center p-4 text-center rounded-lg border bg-white">
-              <span className="text-muted-foreground font-medium uppercase tracking-widest text-xs mb-2">Total Weeks</span>
-              <span className="text-4xl font-bold text-foreground font-heading">{stats.totalWeeks}</span>
-            </div>
+            {/* Bottom row: Payout tiles */}
+            {selectedSeason === 'All-Time' ? (
+              <>
+                <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
+                  <div className="flex flex-col items-center justify-center p-4 text-center rounded-lg border bg-emerald-50 border-emerald-200">
+                    <span className="text-emerald-700 font-medium uppercase tracking-widest text-xs mb-2">Total Payout</span>
+                    <span className="text-4xl font-bold font-heading text-emerald-800">
+                      {(stats.seasonWinnings ?? 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' })}
+                    </span>
+                  </div>
+                  <div className="flex flex-col items-center justify-center p-4 text-center rounded-lg border bg-rose-50 border-rose-200">
+                    <span className="text-rose-700 font-medium uppercase tracking-widest text-xs mb-2">Total Bet</span>
+                    <span className="text-4xl font-bold font-heading text-rose-800">
+                      {totalBetAmount.toLocaleString('en-US', { style: 'currency', currency: 'USD' })}
+                    </span>
+                  </div>
+                </div>
+                <div className="grid gap-4 grid-cols-1">
+                  {(() => {
+                    const totalNet = (stats.seasonWinnings ?? 0) - totalBetAmount;
+                    const isTotalNetPositive = totalNet >= 0;
+                    return (
+                      <div className={cn(
+                        "flex flex-col items-center justify-center p-4 text-center rounded-lg border",
+                        isTotalNetPositive ? "bg-emerald-50 border-emerald-200" : "bg-rose-50 border-rose-200"
+                      )}>
+                        <span className={cn(
+                          "font-medium uppercase tracking-widest text-xs mb-2",
+                          isTotalNetPositive ? "text-emerald-700" : "text-rose-700"
+                        )}>Total Net</span>
+                        <span className={cn(
+                          "text-4xl font-bold font-heading",
+                          isTotalNetPositive ? "text-emerald-800" : "text-rose-800"
+                        )}>
+                          {Math.abs(totalNet).toLocaleString('en-US', { style: 'currency', currency: 'USD' })}
+                        </span>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </>
+            ) : (
+              <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
+                <div className="flex flex-col items-center justify-center p-4 text-center rounded-lg border bg-emerald-50 border-emerald-200">
+                  <span className="text-emerald-700 font-medium uppercase tracking-widest text-xs mb-2">Total Payout</span>
+                  <span className="text-4xl font-bold font-heading text-emerald-800">
+                    {(stats.seasonWinnings ?? 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' })}
+                  </span>
+                </div>
+                <div className="flex flex-col items-center justify-center p-4 text-center rounded-lg border bg-emerald-50 border-emerald-200">
+                  <span className="text-emerald-700 font-medium uppercase tracking-widest text-xs mb-2">Per Player Payout</span>
+                  <span className="text-4xl font-bold font-heading text-emerald-800">
+                    {(stats.perPlayerWinnings ?? 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' })}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
