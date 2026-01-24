@@ -1675,7 +1675,7 @@ function extractGameDetails(
     awayMoneylineOdds = odds?.awayTeamOdds?.moneyLine;
 
     // Determine favorite from odds details (e.g., "KC -7.5")
-    if (odds.details) {
+    if (odds?.details) {
       const detailsMatch = odds.details.match(/([A-Z]+)\s*(-?\d+\.?\d*)/);
       if (detailsMatch) {
         favoriteTeam = detailsMatch[1];
