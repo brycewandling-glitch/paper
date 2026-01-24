@@ -7,6 +7,27 @@ import { resolvePickFromESPN, getWeekDate, lookupGameByResolvedText, detectSport
 import { ensureWeekRowExists } from './weekManager';
 import { archiveWeekGameData, checkAndArchiveReadyWeeks, getArchivedGameData, parseArchivedGameData } from './gameArchiver';
 
+// Simple in-memory cache for week-picks responses (to avoid re-fetching ESPN data)
+interface WeekPicksCache {
+  data: any;
+  timestamp: number;
+}
+const weekPicksCache = new Map<string, WeekPicksCache>();
+const WEEK_PICKS_CACHE_TTL_MS = 30 * 1000; // 30 second cache for current week data
+
+function getWeekPicksFromCache(cacheKey: string): any | null {
+  const entry = weekPicksCache.get(cacheKey);
+  if (entry && Date.now() - entry.timestamp < WEEK_PICKS_CACHE_TTL_MS) {
+    console.log(`[Cache] Using cached week-picks for ${cacheKey}`);
+    return entry.data;
+  }
+  return null;
+}
+
+function setWeekPicksCache(cacheKey: string, data: any): void {
+  weekPicksCache.set(cacheKey, { data, timestamp: Date.now() });
+}
+
 /**
  * Extract potential team name hints from pick text.
  * Returns lowercase team hints for comparison.
@@ -424,8 +445,16 @@ export async function registerRoutes(
   app.get("/api/week-picks", async (req, res) => {
     try {
       const sheet = typeof req.query.sheet === "string" ? req.query.sheet : "Season 4";
-      await ensureWeekRowExists({ sheetName: sheet });
       const weekNumber = parseInt(String(req.query.week || "1"));
+      
+      // Check cache first (skip cache buster param when checking)
+      const cacheKey = `${sheet}:${weekNumber}`;
+      const cachedResponse = getWeekPicksFromCache(cacheKey);
+      if (cachedResponse) {
+        return res.json(cachedResponse);
+      }
+      
+      await ensureWeekRowExists({ sheetName: sheet });
       
       const data = await getSheetData(sheet);
       if (!data || data.length === 0) {
@@ -616,7 +645,12 @@ export async function registerRoutes(
         };
       });
       
-      res.json({ week: weekNumber, picks, hasArchivedData });
+      const response = { week: weekNumber, picks, hasArchivedData };
+      
+      // Cache the response for subsequent requests
+      setWeekPicksCache(cacheKey, response);
+      
+      res.json(response);
     } catch (error) {
       console.error("API /week-picks error:", error);
       res.status(500).json({ error: String(error) });
