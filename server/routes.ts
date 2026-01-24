@@ -343,14 +343,38 @@ export async function registerRoutes(
       const isGolfBet = /golf|pga|to\s*win|scheffler|mcilroy|rahm|koepka/i.test(resolvedText) || 
                         /golf|pga|to\s*win|scheffler|mcilroy|rahm|koepka/i.test(pickText || '');
       
-      if (isGolfBet) {
-        // Use the golf lookup directly
-        gameDetails = await lookupGameByResolvedText(resolvedText, 'pga', pickText);
-      } else if (hasMatchupFormatting) {
-        gameDetails = await lookupGameByResolvedText(resolvedText, lookupSport, pickText);
-      }
-
+      // Check if pick text teams match resolved text teams
+      // If they don't match, the resolved text is probably wrong - try resolving from pickText first
       const hasValidWeek = typeof weekParam === 'number' && Number.isFinite(weekParam) && weekParam > 0;
+      const teamsMatch = pickText ? pickMatchesResolved(pickText, resolvedText) : true;
+      
+      if (!teamsMatch && pickText && sheetName && hasValidWeek) {
+        console.log(`[game-details] Teams mismatch detected: pick="${pickText}" vs resolved="${resolvedText}". Resolving from pick text.`);
+        try {
+          const sheetData = await getSheetData(sheetName);
+          const weekDate = await getWeekDate(sheetData, weekParam);
+          if (weekDate) {
+            // Use sport from pickText since resolved text is wrong
+            const pickSport = detectSport(pickText);
+            gameDetails = await resolvePickFromESPN(weekDate, pickText, pickSport);
+            if (gameDetails) {
+              console.log(`[game-details] Re-resolved to: ${gameDetails.gameName}`);
+            }
+          }
+        } catch (mismatchError) {
+          console.error("[game-details] Mismatch resolution failed:", mismatchError);
+        }
+      }
+      
+      // If no mismatch or mismatch resolution failed, try normal lookup
+      if (!gameDetails) {
+        if (isGolfBet) {
+          // Use the golf lookup directly
+          gameDetails = await lookupGameByResolvedText(resolvedText, 'pga', pickText);
+        } else if (hasMatchupFormatting) {
+          gameDetails = await lookupGameByResolvedText(resolvedText, lookupSport, pickText);
+        }
+      }
 
       if (!gameDetails && sheetName && pickText && hasValidWeek) {
         try {

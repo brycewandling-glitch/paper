@@ -339,7 +339,7 @@ export default function Ticket() {
               }
             }
             
-            const gameDetails = await fetchGameDetails(pick.resolvedTeam, sport);
+            const gameDetails = await fetchGameDetails(pick.resolvedTeam, sport, { pickText: String(pick.team ?? ''), week: selectedWeek, sheet: seasonName });
             if (!mounted) return pick;
             
             if (gameDetails) {
@@ -355,10 +355,13 @@ export default function Ticket() {
                 const match = pickTextLower.match(/(over|under)\s*(\d+\.?\d*)/i);
                 return match ? parseFloat(match[2]) : undefined;
               })();
-              let adjustedResolved = pick.resolvedTeam;
+              
+              // Always construct resolvedTeam from game details to handle mismatches
+              // between spreadsheet data and actual game
+              const matchup = `${gameDetails.awayTeam} @ ${gameDetails.homeTeam}`;
+              let adjustedResolved: string;
 
               if ((hasOverKeyword || hasUnderKeyword) && !pick.isTail && !pick.isReverseTail) {
-                const matchup = `${gameDetails.awayTeam} @ ${gameDetails.homeTeam}`;
                 const ouLabel = hasOverKeyword && !hasUnderKeyword ? 'Over' : hasUnderKeyword && !hasOverKeyword ? 'Under' : (hasOverKeyword ? 'Over' : 'Under');
                 const derivedTotal = [
                   gameDetails.overUnder,
@@ -369,6 +372,10 @@ export default function Ticket() {
                 const totalText = typeof derivedTotal === 'number' ? ` ${derivedTotal}` : '';
                 adjustedResolved = `${matchup} (${ouLabel}${totalText})`;
                 gameDetails.overUnder = typeof derivedTotal === 'number' ? derivedTotal : gameDetails.overUnder;
+              } else {
+                // For spread/moneyline bets, use gameDetails.resolvedText if available,
+                // otherwise construct from matchup with pick details
+                adjustedResolved = gameDetails.resolvedText || `${matchup} (${resolvedPickDetails || gameDetails.matchedTeam || ''})`;
               }
 
               const enhancedPick = {
