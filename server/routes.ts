@@ -453,14 +453,14 @@ export async function registerRoutes(
       const hasArchivedData = archivedData && archivedData.size > 0;
       
       // Extract player picks and their resolved values
-      const picks: Array<{
+      type PickData = {
         player: string;
         pick: string;
         resolved: string;
         betAmount: string;
         gameDetails?: GameDetails;
         fromArchive?: boolean;
-      }> = [];
+      };
       
       // Known player names (these should have corresponding bet amount and resolved columns)
       const knownPlayers = ['Ethan', 'Mitch', 'Phil', 'Bryce', 'Cory', 'JB', 'Alex', 'Lucas', 'Kyle', 'Matt', 'Cole', 'Tyler', 'Carley', 'Jon', 'Nathan', 'Jaime', 'Evan', 'Brandon'];
@@ -472,6 +472,16 @@ export async function registerRoutes(
         // Check if it's a known player name (exact match)
         return knownPlayers.some(p => p.toLowerCase() === lower);
       });
+      
+      // First pass: collect all basic pick data and identify which need ESPN lookups
+      const pickDataList: Array<{
+        playerName: string;
+        pickText: string;
+        resolved: string;
+        betAmount: string;
+        needsEspnLookup: boolean;
+        archivedGameDetails?: GameDetails;
+      }> = [];
       
       for (const playerCol of playerColumns) {
         const playerName = playerCol.trim();
@@ -488,9 +498,8 @@ export async function registerRoutes(
         const resolved = resolvedCol ? String(weekRow[resolvedCol] || '').trim() : '';
         const betAmount = betAmountCol ? String(weekRow[betAmountCol] || '').trim() : '';
         
-        // Look up game details - first check archived data, then ESPN
-        let gameDetails: GameDetails | undefined;
-        let fromArchive = false;
+        let archivedGameDetails: GameDetails | undefined;
+        let needsEspnLookup = false;
         
         if (resolved && !resolved.startsWith('Tail') && !resolved.startsWith('Reverse Tail')) {
           // Check archived data first
@@ -499,7 +508,7 @@ export async function registerRoutes(
             const parsed = parseArchivedGameData(archivedStr);
             if (parsed) {
               // Merge with resolved text info
-              gameDetails = {
+              archivedGameDetails = {
                 gameId: 'archived',
                 gameName: `${parsed.awayTeam} at ${parsed.homeTeam}`,
                 shortName: `${parsed.awayTeam?.split(' ').pop()} @ ${parsed.homeTeam?.split(' ').pop()}`,
@@ -535,63 +544,77 @@ export async function registerRoutes(
                                 (parsed.projectedTotal > parsed.overUnder ? 'likely_win' : 'likely_loss') :
                                 (parsed.projectedTotal < parsed.overUnder ? 'likely_win' : 'likely_loss')) : 'coin_flip',
               };
-              fromArchive = true;
             }
           }
           
-          // Fall back to ESPN if no archived data
-          if (!gameDetails) {
-            try {
-              // Detect sport from resolved text first, then pick text as fallback
-              let sport = detectSport(resolved);
-              if (sport === 'nfl' && pickText) {
-                // If defaulting to NFL, check if pick text specifies a different sport
-                const pickSport = detectSport(pickText);
-                if (pickSport !== 'nfl') {
-                  sport = pickSport;
-                }
-              }
-              
-              // Check if pick text teams match resolved text teams
-              // If they don't match, the resolved text is probably wrong - re-resolve from pickText
-              const teamsMatch = pickText ? pickMatchesResolved(pickText, resolved) : true;
-              
-              if (!teamsMatch && pickText) {
-                // When teams mismatch, always use sport from pickText since resolved is wrong
-                const pickSport = detectSport(pickText);
-                console.log(`[Week-Picks] Teams mismatch detected for ${playerName}: pick="${pickText}" vs resolved="${resolved}". Re-resolving from pick text with sport: ${pickSport}`);
-                const weekDate = await getWeekDate(data, weekNumber);
-                if (weekDate) {
-                  const freshDetails = await resolvePickFromESPN(weekDate, pickText, pickSport);
-                  if (freshDetails) {
-                    gameDetails = freshDetails;
-                    console.log(`[Week-Picks] Re-resolved to: ${freshDetails.gameName}`);
-                  }
-                }
-              }
-              
-              // If still no details (or teams matched), use normal lookup
-              if (!gameDetails) {
-                const details = await lookupGameByResolvedText(resolved, sport, pickText);
-                if (details) {
-                  gameDetails = details;
-                }
-              }
-            } catch (e) {
-              console.error(`Failed to lookup game for ${playerName}:`, e);
-            }
+          // Need ESPN lookup if no archived data
+          if (!archivedGameDetails) {
+            needsEspnLookup = true;
           }
         }
         
-        picks.push({
+        pickDataList.push({ playerName, pickText, resolved, betAmount, needsEspnLookup, archivedGameDetails });
+      }
+      
+      // Second pass: fetch ESPN data in PARALLEL for all picks that need it
+      const espnLookups = pickDataList
+        .filter(p => p.needsEspnLookup)
+        .map(async (pickData) => {
+          const { playerName, pickText, resolved } = pickData;
+          try {
+            // Detect sport from resolved text first, then pick text as fallback
+            let sport = detectSport(resolved);
+            if (sport === 'nfl' && pickText) {
+              const pickSport = detectSport(pickText);
+              if (pickSport !== 'nfl') {
+                sport = pickSport;
+              }
+            }
+            
+            // Check if pick text teams match resolved text teams
+            const teamsMatch = pickText ? pickMatchesResolved(pickText, resolved) : true;
+            
+            if (!teamsMatch && pickText) {
+              const pickSport = detectSport(pickText);
+              console.log(`[Week-Picks] Teams mismatch detected for ${playerName}: pick="${pickText}" vs resolved="${resolved}". Re-resolving from pick text with sport: ${pickSport}`);
+              const weekDate = await getWeekDate(data, weekNumber);
+              if (weekDate) {
+                const freshDetails = await resolvePickFromESPN(weekDate, pickText, pickSport);
+                if (freshDetails) {
+                  console.log(`[Week-Picks] Re-resolved to: ${freshDetails.gameName}`);
+                  return { playerName, gameDetails: freshDetails };
+                }
+              }
+            }
+            
+            // Normal lookup
+            const details = await lookupGameByResolvedText(resolved, sport, pickText);
+            return { playerName, gameDetails: details || undefined };
+          } catch (e) {
+            console.error(`Failed to lookup game for ${playerName}:`, e);
+            return { playerName, gameDetails: undefined };
+          }
+        });
+      
+      // Wait for all ESPN lookups in parallel
+      const espnResults = await Promise.all(espnLookups);
+      const espnDetailsMap = new Map(espnResults.map(r => [r.playerName, r.gameDetails]));
+      
+      // Build final picks array
+      const picks: PickData[] = pickDataList.map(pickData => {
+        const { playerName, pickText, resolved, betAmount, archivedGameDetails } = pickData;
+        const gameDetails = archivedGameDetails || espnDetailsMap.get(playerName);
+        const fromArchive = !!archivedGameDetails;
+        
+        return {
           player: playerName,
           pick: pickText,
           resolved,
           betAmount,
           gameDetails,
           fromArchive
-        });
-      }
+        };
+      });
       
       res.json({ week: weekNumber, picks, hasArchivedData });
     } catch (error) {
