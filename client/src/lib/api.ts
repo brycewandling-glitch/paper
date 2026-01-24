@@ -37,9 +37,11 @@ function normalizeResolvedDescription(raw: string | undefined | null): string | 
     return text;
   }
 
-  const trailingMeta = /\s*\((?:legends|leaders|nfl|nba|mlb|nhl|ncaaf|cfb|ncaab|cbb)\)\s*$/i;
-  while (trailingMeta.test(text)) {
-    text = text.replace(trailingMeta, '').trim();
+  // Only strip division meta tags (legends/leaders), but PRESERVE sport tags (ncaab, nba, nfl, fcs, etc.)
+  // Sport tags are needed for game lookup
+  const divisionMeta = /\s*\((?:legends|leaders)\)\s*$/i;
+  while (divisionMeta.test(text)) {
+    text = text.replace(divisionMeta, '').trim();
   }
 
   if (text.includes('|')) {
@@ -1630,6 +1632,7 @@ export async function fetchGameDetails(
     const params = new URLSearchParams({
       resolved: resolvedText,
       sport,
+      _t: String(Date.now()), // Cache buster for live data
     });
     if (options?.sheet) params.set('sheet', options.sheet);
     if (options?.week !== undefined) params.set('week', String(options.week));
@@ -1645,6 +1648,41 @@ export async function fetchGameDetails(
     console.error('Error fetching game details:', error);
     return null;
   }
+}
+
+/**
+ * Fetch all picks for a week with game details included - single API call
+ * This is much faster than fetching each pick's game details individually
+ */
+export interface WeekPicksResponse {
+  week: number;
+  picks: Array<{
+    player: string;
+    pick: string;
+    resolved: string;
+    betAmount: string;
+    gameDetails?: GameDetails;
+    fromArchive?: boolean;
+  }>;
+  hasArchivedData: boolean | null;
+}
+
+export async function fetchWeekPicksWithGameDetails(
+  sheetName: string,
+  weekNumber: number
+): Promise<WeekPicksResponse> {
+  // Add cache-busting timestamp for live data
+  const params = new URLSearchParams({
+    sheet: sheetName,
+    week: String(weekNumber),
+    _t: String(Date.now()), // Cache buster
+  });
+  
+  const res = await fetch(`/api/week-picks?${params.toString()}`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch week picks: ${res.status}`);
+  }
+  return res.json();
 }
 
 export default { fetchSeasonPlayers, fetchAllTimePlayers, fetchSeasonData, fetchAllTimeData };

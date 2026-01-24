@@ -3,6 +3,26 @@
  * Fetches game data from ESPN APIs and resolves picks to actual games
  */
 
+// Simple in-memory cache for ESPN game data to avoid repeated API calls
+interface CacheEntry<T> {
+  data: T;
+  timestamp: number;
+}
+const espnGamesCache = new Map<string, CacheEntry<ESPNEvent[]>>();
+const CACHE_TTL_MS = 60 * 1000; // 1 minute cache
+
+function getCachedGames(cacheKey: string): ESPNEvent[] | null {
+  const entry = espnGamesCache.get(cacheKey);
+  if (entry && Date.now() - entry.timestamp < CACHE_TTL_MS) {
+    return entry.data;
+  }
+  return null;
+}
+
+function setCachedGames(cacheKey: string, data: ESPNEvent[]): void {
+  espnGamesCache.set(cacheKey, { data, timestamp: Date.now() });
+}
+
 interface ESPNBroadcast {
   market: string;
   names: string[];
@@ -21,6 +41,7 @@ interface ESPNCompetitor {
   score?: string;
   winner?: boolean;
   records?: Array<{ summary: string }>;
+  curatedRank?: { current: number };  // Team's current ranking (for college sports)
 }
 
 interface ESPNOdds {
@@ -165,6 +186,52 @@ export interface GameDetails {
   coverMargin?: number;
   projectedTotal?: number;
   betType?: BetType;
+  bovadaUrl?: string;         // Deep link to Bovada game page
+  
+  // Golf-specific fields
+  isGolfTournament?: boolean;
+  tournamentName?: string;
+  golferName?: string;
+  golferPosition?: number;
+  golferScore?: string;       // e.g., "-17", "+2", "E"
+  tournamentRound?: number;
+  totalRounds?: number;
+}
+
+// Golf tournament interfaces
+interface GolfCompetitor {
+  id: string;
+  order: number;  // Position in tournament (1 = 1st place)
+  athlete: {
+    fullName: string;
+    displayName: string;
+    shortName: string;
+  };
+  score: string;  // e.g., "-17", "+2", "E"
+  linescores?: Array<{
+    value: number;
+    displayValue: string;
+    period: number;
+  }>;
+}
+
+interface GolfTournament {
+  id: string;
+  name: string;
+  shortName: string;
+  date: string;
+  endDate: string;
+  status: {
+    type: {
+      state: 'pre' | 'in' | 'post';
+      completed: boolean;
+      description: string;
+    };
+  };
+  competitions: Array<{
+    id: string;
+    competitors: GolfCompetitor[];
+  }>;
 }
 
 // Sport endpoints for ESPN API
@@ -184,10 +251,128 @@ const SPORT_ENDPOINTS: Record<string, string> = {
   'mls': 'soccer/usa.1',
   'epl': 'soccer/eng.1',
   'premier league': 'soccer/eng.1',
+  'golf': 'golf/pga',
+  'pga': 'golf/pga',
 };
 
 // Sports that should also check FCS endpoint
 const SPORTS_WITH_FCS_FALLBACK = ['ncaaf', 'cfb', 'college football'];
+
+// Bovada sport/league mappings
+const BOVADA_SPORT_PATHS: Record<string, string> = {
+  'nfl': 'football/nfl',
+  'ncaaf': 'football/college-football',
+  'cfb': 'football/college-football',
+  'nba': 'basketball/nba',
+  'ncaab': 'basketball/college-basketball',
+  'cbb': 'basketball/college-basketball',
+  'mlb': 'baseball/mlb',
+  'nhl': 'hockey/nhl',
+};
+
+/**
+ * Generate a Bovada deep link URL for a game
+ * Format: https://www.bovada.lv/sports/{sport}/{league}/{away-team}-{home-team}-{YYYYMMDDHHMM}
+ * For college sports, ranked teams include their ranking: alabama-18-oklahoma-202601171300
+ * The timestamp is in ET (Eastern Time)
+ */
+function generateBovadaUrl(
+  sport: string, 
+  awayTeam: string, 
+  homeTeam: string, 
+  gameDate: string,
+  awayRank?: number,
+  homeRank?: number
+): string | undefined {
+  const sportPath = BOVADA_SPORT_PATHS[sport.toLowerCase()];
+  if (!sportPath) return undefined;
+  
+  const isCollege = sport.toLowerCase().includes('ncaa') || sport.toLowerCase() === 'cfb' || sport.toLowerCase() === 'cbb';
+  
+  // Convert team names to URL-friendly format (lowercase, spaces to hyphens)
+  // For college teams, extract just the school name (remove mascot)
+  const formatTeamName = (name: string, rank?: number): string => {
+    let formatted = name.toLowerCase();
+    
+    if (isCollege) {
+      // Remove mascot suffixes to get just the school name
+      // Bovada uses format like "alabama-18" or "michigan-state-12"
+      const mascotPatterns = [
+        /\s+(crimson\s+tide|sooners|spartans|huskies|bulldogs|pirates|cornhuskers|hoosiers|wildcats|tigers|bears|longhorns|aggies|volunteers|gators|seminoles|wolverines|buckeyes|fighting\s+irish|tar\s+heels|blue\s+devils|cavaliers|hokies|yellow\s+jackets|hurricanes|orange|cardinal|ducks|beavers|cougars|utes|buffaloes|sun\s+devils|bruins|trojans|golden\s+bears|mountaineers|cyclones|jayhawks|red\s+raiders|horned\s+frogs|cowboys|panthers|wolfpack|demon\s+deacons|terrapins|scarlet\s+knights|nittany\s+lions|hawkeyes|badgers|golden\s+gophers|boilermakers|illini|razorbacks|rebels|commodores|gamecocks|bearcats|musketeers|bluejays|red\s+storm|hoyas|friars|cardinals|billikens|explorers|owls|hawks|golden\s+eagles|blue\s+demons|phoenix|braves|49ers|monarchs|colonials|rams|flyers|gaels|zags|gonzaga|toreros|waves|matadors|aztecs|falcons|broncos|lobos)$/i
+      ];
+      for (const pattern of mascotPatterns) {
+        formatted = formatted.replace(pattern, '');
+      }
+    }
+    
+    let slug = formatted
+      .replace(/[^a-z0-9\s-]/g, '') // Remove special characters
+      .replace(/\s+/g, '-')         // Replace spaces with hyphens
+      .replace(/-+/g, '-')          // Collapse multiple hyphens
+      .replace(/^-|-$/g, '');       // Remove leading/trailing hyphens
+    
+    // Add ranking for college teams if they're ranked
+    if (isCollege && rank && rank <= 25) {
+      slug = `${slug}-${rank}`;
+    }
+    
+    return slug;
+  };
+  
+  const awaySlug = formatTeamName(awayTeam, awayRank);
+  const homeSlug = formatTeamName(homeTeam, homeRank);
+  
+  // Parse the ISO date and convert to ET
+  const date = new Date(gameDate);
+  
+  // Format as YYYYMMDDHHMM in ET
+  const etFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  });
+  
+  const parts = etFormatter.formatToParts(date);
+  const getPart = (type: string) => parts.find(p => p.type === type)?.value || '';
+  
+  const year = getPart('year');
+  const month = getPart('month');
+  const day = getPart('day');
+  const hour = getPart('hour');
+  const minute = getPart('minute');
+  
+  const timestamp = `${year}${month}${day}${hour}${minute}`;
+  
+  return `https://www.bovada.lv/sports/${sportPath}/${awaySlug}-${homeSlug}-${timestamp}`;
+}
+
+// NFL team names for sport-aware matching
+const NFL_TEAMS = new Set([
+  'Arizona Cardinals', 'Atlanta Falcons', 'Baltimore Ravens', 'Buffalo Bills',
+  'Carolina Panthers', 'Chicago Bears', 'Cincinnati Bengals', 'Cleveland Browns',
+  'Dallas Cowboys', 'Denver Broncos', 'Detroit Lions', 'Green Bay Packers',
+  'Houston Texans', 'Indianapolis Colts', 'Jacksonville Jaguars', 'Kansas City Chiefs',
+  'Las Vegas Raiders', 'Los Angeles Chargers', 'Los Angeles Rams', 'Miami Dolphins',
+  'Minnesota Vikings', 'New England Patriots', 'New Orleans Saints', 'New York Giants',
+  'New York Jets', 'Philadelphia Eagles', 'Pittsburgh Steelers', 'San Francisco 49ers',
+  'Seattle Seahawks', 'Tampa Bay Buccaneers', 'Tennessee Titans', 'Washington Commanders'
+]);
+
+// NBA team names for sport-aware matching
+const NBA_TEAMS = new Set([
+  'Atlanta Hawks', 'Boston Celtics', 'Brooklyn Nets', 'Charlotte Hornets',
+  'Chicago Bulls', 'Cleveland Cavaliers', 'Dallas Mavericks', 'Denver Nuggets',
+  'Detroit Pistons', 'Golden State Warriors', 'Houston Rockets', 'Indiana Pacers',
+  'Los Angeles Clippers', 'Los Angeles Lakers', 'Memphis Grizzlies', 'Miami Heat',
+  'Milwaukee Bucks', 'Minnesota Timberwolves', 'New Orleans Pelicans', 'New York Knicks',
+  'Oklahoma City Thunder', 'Orlando Magic', 'Philadelphia 76ers', 'Phoenix Suns',
+  'Portland Trail Blazers', 'Sacramento Kings', 'San Antonio Spurs', 'Toronto Raptors',
+  'Utah Jazz', 'Washington Wizards'
+]);
 
 // Team name aliases and abbreviations
 const TEAM_ALIASES: Record<string, string[]> = {
@@ -224,49 +409,82 @@ const TEAM_ALIASES: Record<string, string[]> = {
   'Tampa Bay Buccaneers': ['buccaneers', 'tampa bay', 'tb', 'bucs', 'tampa'],
   'Tennessee Titans': ['titans', 'tennessee', 'ten'],
   'Washington Commanders': ['commanders', 'washington', 'was', 'wsh'],
+  // NBA Teams
+  'Atlanta Hawks': ['hawks', 'atlanta hawks'],
+  'Boston Celtics': ['celtics', 'boston celtics'],
+  'Brooklyn Nets': ['nets', 'brooklyn', 'brooklyn nets'],
+  'Charlotte Hornets': ['hornets', 'charlotte hornets'],
+  'Chicago Bulls': ['bulls', 'chicago bulls'],
+  'Cleveland Cavaliers': ['cavaliers', 'cavs', 'cleveland cavaliers'],
+  'Dallas Mavericks': ['mavericks', 'mavs', 'dallas mavericks'],
+  'Denver Nuggets': ['nuggets', 'denver nuggets'],
+  'Detroit Pistons': ['pistons', 'detroit pistons'],
+  'Golden State Warriors': ['warriors', 'golden state', 'gsw', 'golden state warriors'],
+  'Houston Rockets': ['rockets', 'houston rockets'],
+  'Indiana Pacers': ['pacers', 'indiana pacers'],
+  'Los Angeles Clippers': ['clippers', 'la clippers', 'lac'],
+  'Los Angeles Lakers': ['lakers', 'la lakers', 'lal'],
+  'Memphis Grizzlies': ['grizzlies', 'memphis grizzlies'],
+  'Miami Heat': ['heat', 'miami heat'],
+  'Milwaukee Bucks': ['bucks', 'milwaukee bucks'],
+  'Minnesota Timberwolves': ['timberwolves', 'wolves', 't-wolves', 'twolves', 'minnesota timberwolves'],
+  'New Orleans Pelicans': ['pelicans', 'new orleans pelicans'],
+  'New York Knicks': ['knicks', 'ny knicks', 'new york knicks'],
+  'Oklahoma City Thunder': ['thunder', 'okc', 'oklahoma city thunder'],
+  'Orlando Magic': ['magic', 'orlando magic'],
+  'Philadelphia 76ers': ['76ers', 'sixers', 'philadelphia 76ers'],
+  'Phoenix Suns': ['suns', 'phoenix suns'],
+  'Portland Trail Blazers': ['trail blazers', 'blazers', 'portland trail blazers'],
+  'Sacramento Kings': ['kings', 'sacramento kings'],
+  'San Antonio Spurs': ['spurs', 'san antonio spurs'],
+  'Toronto Raptors': ['raptors', 'toronto raptors'],
+  'Utah Jazz': ['jazz', 'utah jazz'],
+  'Washington Wizards': ['wizards', 'washington wizards'],
   // Common college teams
-  'Alabama': ['alabama', 'bama', 'crimson tide', 'tide'],
-  'Ohio State': ['ohio state', 'osu', 'buckeyes'],
-  'Georgia': ['georgia', 'uga', 'bulldogs', 'dawgs'],
-  'Michigan': ['michigan', 'wolverines', 'um'],
-  'Texas': ['texas', 'longhorns', 'ut'],
-  'USC': ['usc', 'trojans', 'southern cal'],
-  'Notre Dame': ['notre dame', 'irish', 'nd'],
-  'Oregon': ['oregon', 'ducks'],
-  'Penn State': ['penn state', 'psu', 'nittany lions'],
-  'Clemson': ['clemson', 'tigers'],
-  'LSU': ['lsu', 'tigers', 'louisiana state'],
-  'Florida': ['florida', 'gators', 'uf'],
-  'Oklahoma': ['oklahoma', 'sooners', 'ou', 'ok'],
-  'Tennessee': ['tennessee', 'vols', 'volunteers'],
-  'Wisconsin': ['wisconsin', 'badgers'],
-  'Iowa': ['iowa', 'hawkeyes'],
-  'Michigan State': ['michigan state', 'msu', 'spartans'],
-  'Auburn': ['auburn', 'tigers'],
-  'Texas A&M': ['texas a&m', 'aggies', 'tamu', 'tam', 'texas am', 'texasam', 'a&m'],
-  'Texas Tech': ['texas tech', 'tt', 'red raiders', 'tech', 'ttu'],
-  'Florida State': ['florida state', 'fsu', 'seminoles', 'noles'],
-  'Miami': ['miami', 'hurricanes', 'canes', 'u'],
-  'Nebraska': ['nebraska', 'cornhuskers', 'huskers'],
-  'Colorado': ['colorado', 'buffaloes', 'buffs', 'cu'],
-  'BYU': ['byu', 'brigham young', 'cougars'],
-  'Utah': ['utah', 'utes'],
-  'Arizona': ['arizona', 'wildcats'],
-  'UCLA': ['ucla', 'bruins'],
-  'Stanford': ['stanford', 'cardinal'],
-  'Washington': ['washington', 'huskies', 'uw'],
-  'Duke': ['duke', 'blue devils'],
-  'North Carolina': ['north carolina', 'unc', 'tar heels'],
-  'Kentucky': ['kentucky', 'wildcats', 'uk'],
-  'Kansas': ['kansas', 'jayhawks', 'ku'],
-  'Indiana': ['indiana', 'hoosiers', 'iu'],
-  'Illinois': ['illinois', 'illini'],
-  'Purdue': ['purdue', 'boilermakers'],
-  'Northwestern': ['northwestern', 'wildcats', 'nw'],
-  'Minnesota': ['minnesota', 'golden gophers', 'gophers'],
-  'Rutgers': ['rutgers', 'scarlet knights'],
-  'Maryland': ['maryland', 'terrapins', 'terps'],
-  'Vanderbilt': ['vanderbilt', 'vandy', 'vandy baby', 'vandy baby!', 'commodores'],
+  'Alabama Crimson Tide': ['alabama', 'bama', 'crimson tide', 'tide', 'alabama crimson tide'],
+  'Ohio State Buckeyes': ['ohio state', 'osu', 'buckeyes', 'ohio state buckeyes'],
+  'Georgia Bulldogs': ['georgia', 'uga', 'bulldogs', 'dawgs', 'georgia bulldogs'],
+  'Michigan Wolverines': ['michigan', 'wolverines', 'um', 'michigan wolverines'],
+  'Texas Longhorns': ['texas', 'longhorns', 'ut', 'texas longhorns'],
+  'USC Trojans': ['usc', 'trojans', 'southern cal', 'usc trojans'],
+  'Notre Dame Fighting Irish': ['notre dame', 'irish', 'nd', 'notre dame fighting irish'],
+  'Oregon Ducks': ['oregon', 'ducks', 'oregon ducks'],
+  'Penn State Nittany Lions': ['penn state', 'psu', 'nittany lions', 'penn state nittany lions'],
+  'Clemson Tigers': ['clemson', 'clemson tigers'],
+  'LSU Tigers': ['lsu', 'louisiana state', 'lsu tigers'],
+  'Florida Gators': ['florida', 'gators', 'uf', 'florida gators'],
+  'Oklahoma Sooners': ['oklahoma', 'sooners', 'ou', 'ok', 'oklahoma sooners'],
+  'Tennessee Volunteers': ['vols', 'volunteers', 'tennessee volunteers', 'tennessee vols'],
+  'Wisconsin Badgers': ['wisconsin', 'badgers', 'wisconsin badgers'],
+  'Iowa Hawkeyes': ['iowa', 'hawkeyes', 'iowa hawkeyes'],
+  'Michigan State Spartans': ['michigan state', 'msu', 'spartans', 'michigan state spartans'],
+  'Auburn Tigers': ['auburn', 'auburn tigers'],
+  'Texas A&M Aggies': ['texas a&m', 'aggies', 'tamu', 'tam', 'texas am', 'texasam', 'a&m', 'texas a&m aggies'],
+  'Texas Tech Red Raiders': ['texas tech', 'tt', 'red raiders', 'tech', 'ttu', 'texas tech red raiders'],
+  'Florida State Seminoles': ['florida state', 'fsu', 'seminoles', 'noles', 'florida state seminoles'],
+  'Miami Hurricanes': ['miami hurricanes', 'hurricanes', 'canes', 'u'],
+  'Nebraska Cornhuskers': ['nebraska', 'cornhuskers', 'huskers', 'nebraska cornhuskers'],
+  'Colorado Buffaloes': ['colorado', 'buffaloes', 'buffs', 'cu', 'colorado buffaloes'],
+  'BYU Cougars': ['byu', 'brigham young', 'byu cougars'],
+  'Utah Utes': ['utah', 'utes', 'utah utes'],
+  'Arizona Wildcats': ['arizona', 'arizona wildcats'],
+  'UCLA Bruins': ['ucla', 'bruins', 'ucla bruins'],
+  'Stanford Cardinal': ['stanford', 'cardinal', 'stanford cardinal'],
+  'Washington Huskies': ['washington', 'huskies', 'uw', 'washington huskies'],
+  'Duke Blue Devils': ['duke', 'blue devils', 'duke blue devils'],
+  'North Carolina Tar Heels': ['north carolina', 'unc', 'tar heels', 'north carolina tar heels'],
+  'Kentucky Wildcats': ['kentucky', 'uk', 'kentucky wildcats'],
+  'Kansas Jayhawks': ['kansas', 'jayhawks', 'ku', 'kansas jayhawks'],
+  'Indiana Hoosiers': ['indiana', 'hoosiers', 'iu', 'indiana hoosiers'],
+  'Illinois Fighting Illini': ['illinois', 'illini', 'illinois fighting illini'],
+  'Purdue Boilermakers': ['purdue', 'boilermakers', 'purdue boilermakers'],
+  'Northwestern Wildcats': ['northwestern', 'nw', 'northwestern wildcats'],
+  'Minnesota Golden Gophers': ['minnesota', 'golden gophers', 'gophers', 'minnesota golden gophers'],
+  'Rutgers Scarlet Knights': ['rutgers', 'scarlet knights', 'rutgers scarlet knights'],
+  'Maryland Terrapins': ['maryland', 'terrapins', 'terps', 'maryland terrapins'],
+  'Vanderbilt Commodores': ['vanderbilt', 'vandy', 'vandy baby', 'vandy baby!', 'commodores', 'vanderbilt commodores'],
+  'Houston Cougars': ['houston cougars', 'cougars', 'houston cougar'],
+  'Baylor Bears': ['baylor', 'baylor bears'],
   'UC San Diego Tritons': ['uc san diego', 'ucsd', 'san diego tritons', 'uc san diego tritons', 'university of california san diego'],
   // Additional college teams for bowl games
   'UNLV': ['unlv', 'rebels', 'unlv rebels', 'las vegas rebels'],
@@ -791,7 +1009,6 @@ async function fetchESPNGamesByDay(sport: string, startDate: Date, endDate: Date
 
 async function fetchESPNGames(sport: string, startDate: Date, endDate: Date): Promise<ESPNEvent[]> {
   const sportLower = sport.toLowerCase();
-  const endpoint = SPORT_ENDPOINTS[sportLower] || SPORT_ENDPOINTS['ncaaf'];
   
   // Format dates as YYYYMMDD
   const formatDate = (d: Date) => {
@@ -804,9 +1021,99 @@ async function fetchESPNGames(sport: string, startDate: Date, endDate: Date): Pr
   const start = formatDate(startDate);
   const end = formatDate(endDate);
   
-  let allEvents: ESPNEvent[] = [];
+  // Check cache first
+  const cacheKey = `${sportLower}:${start}:${end}`;
+  const cached = getCachedGames(cacheKey);
+  if (cached) {
+    console.log(`[ESPN] Using cached ${cached.length} events for ${sportLower} ${start}-${end}`);
+    return cached;
+  }
   
-  // Fetch from primary endpoint
+  // For FCS, use the regular college football endpoint with groups=81
+  // The dedicated FCS endpoint (football/fcs) is broken
+  const isFCS = sportLower === 'fcs';
+  const endpoint = isFCS 
+    ? SPORT_ENDPOINTS['ncaaf'] 
+    : (SPORT_ENDPOINTS[sportLower] || SPORT_ENDPOINTS['ncaaf']);
+  
+  let allEvents: ESPNEvent[] = [];
+  const existingIds = new Set<string>();
+  
+  // For FCS, fetch using the college football endpoint with groups=81 (FCS division)
+  if (isFCS) {
+    console.log(`[ESPN] Fetching FCS games using groups=81 for ${start}-${end}`);
+    const fcsUrl = `https://site.api.espn.com/apis/site/v2/sports/${endpoint}/scoreboard?dates=${start}-${end}&groups=81`;
+    try {
+      const response = await fetch(fcsUrl);
+      if (response.ok) {
+        const data = await response.json() as ESPNResponse;
+        allEvents = data.events || [];
+        console.log(`[ESPN] Found ${allEvents.length} FCS events`);
+      }
+    } catch (error) {
+      console.warn('[ESPN] FCS fetch error:', error);
+    }
+    setCachedGames(cacheKey, allEvents);
+    return allEvents;
+  }
+  
+  // For NCAAB, ESPN limits scoreboard results - need to fetch by conference groups
+  if (sportLower === 'ncaab') {
+    // Major college basketball conference group IDs for ESPN API
+    const conferenceGroups = ['2', '4', '5', '7', '8', '9', '12', '21', '62'];
+    // 2=ACC, 4=A10, 5=Big Ten, 7=Big East, 8=Big 12, 9=SEC, 12=MWC, 21=Big West, 62=AAC
+    
+    const cursor = new Date(startDate.getTime());
+    const endTime = endDate.getTime();
+    
+    while (cursor.getTime() <= endTime) {
+      const dateStr = formatDate(cursor);
+      
+      // First fetch with limit=500 for general games
+      try {
+        const url = `https://site.api.espn.com/apis/site/v2/sports/${endpoint}/scoreboard?dates=${dateStr}&limit=500`;
+        const response = await fetch(url);
+        if (response.ok) {
+          const data = await response.json() as ESPNResponse;
+          for (const event of data.events || []) {
+            if (!existingIds.has(event.id)) {
+              existingIds.add(event.id);
+              allEvents.push(event);
+            }
+          }
+        }
+      } catch (error) {
+        console.warn(`[ESPN] NCAAB limit fetch error for ${dateStr}:`, error);
+      }
+      
+      // Then fetch each conference group to catch games that limit=500 misses
+      for (const groupId of conferenceGroups) {
+        try {
+          const url = `https://site.api.espn.com/apis/site/v2/sports/${endpoint}/scoreboard?dates=${dateStr}&groups=${groupId}`;
+          const response = await fetch(url);
+          if (response.ok) {
+            const data = await response.json() as ESPNResponse;
+            for (const event of data.events || []) {
+              if (!existingIds.has(event.id)) {
+                existingIds.add(event.id);
+                allEvents.push(event);
+              }
+            }
+          }
+        } catch (error) {
+          // Silently ignore conference group fetch errors
+        }
+      }
+      
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    
+    console.log(`[ESPN] Found ${allEvents.length} NCAAB events total`);
+    setCachedGames(cacheKey, allEvents);
+    return allEvents;
+  }
+  
+  // Fetch from primary endpoint for non-NCAAB sports
   const rangeUrl = `https://site.api.espn.com/apis/site/v2/sports/${endpoint}/scoreboard?dates=${start}-${end}`;
   
   console.log(`[ESPN] Fetching games from: ${rangeUrl}`);
@@ -826,12 +1133,14 @@ async function fetchESPNGames(sport: string, startDate: Date, endDate: Date): Pr
     allEvents = await fetchESPNGamesByDay(sport, startDate, endDate);
   }
   
-  // For college football, also check FCS endpoint for FCS games
+  // For college football, also fetch FCS games using groups=81 parameter
+  // (The dedicated FCS endpoint is broken, but FCS games are available via groups)
   if (SPORTS_WITH_FCS_FALLBACK.includes(sportLower)) {
     try {
-      const fcsEndpoint = SPORT_ENDPOINTS['fcs'];
-      const fcsUrl = `https://site.api.espn.com/apis/site/v2/sports/${fcsEndpoint}/scoreboard?dates=${start}-${end}`;
-      console.log(`[ESPN] Also checking FCS games from: ${fcsUrl}`);
+      // Use the main college football endpoint with groups=81 for FCS
+      const cfbEndpoint = SPORT_ENDPOINTS['ncaaf'];
+      const fcsUrl = `https://site.api.espn.com/apis/site/v2/sports/${cfbEndpoint}/scoreboard?dates=${start}-${end}&groups=81`;
+      console.log(`[ESPN] Fetching FCS games from: ${fcsUrl}`);
       
       const fcsResponse = await fetch(fcsUrl);
       if (fcsResponse.ok) {
@@ -840,9 +1149,9 @@ async function fetchESPNGames(sport: string, startDate: Date, endDate: Date): Pr
         console.log(`[ESPN] Found ${fcsEvents.length} FCS events`);
         
         // Add FCS events that aren't already in our list (by game ID)
-        const existingIds = new Set(allEvents.map(e => e.id));
+        const existingIdsForFcs = new Set(allEvents.map(e => e.id));
         for (const event of fcsEvents) {
-          if (!existingIds.has(event.id)) {
+          if (!existingIdsForFcs.has(event.id)) {
             allEvents.push(event);
           }
         }
@@ -852,6 +1161,7 @@ async function fetchESPNGames(sport: string, startDate: Date, endDate: Date): Pr
     }
   }
   
+  setCachedGames(cacheKey, allEvents);
   return allEvents;
 }
 
@@ -953,11 +1263,38 @@ async function enrichEventsWithOdds(events: ESPNEvent[], sport: string): Promise
  * Find matching team in aliases
  * Prioritizes exact matches and longer alias matches over partial matches
  */
-function findTeamMatch(searchText: string): string | null {
+/**
+ * Find a team match, optionally filtering by sport to avoid cross-sport conflicts
+ * (e.g., "Houston Cougars" shouldn't match "Houston Texans" when sport is NCAAB)
+ */
+function findTeamMatch(searchText: string, sport?: string): string | null {
   const search = searchText.toLowerCase().trim();
+  
+  // Determine which teams to exclude based on sport
+  const isCollegeSport = sport && ['ncaab', 'ncaaf', 'cfb', 'cbb', 'fcs', 'college basketball', 'college football'].includes(sport.toLowerCase());
+  const isNFL = sport && sport.toLowerCase() === 'nfl';
+  const isNBA = sport && sport.toLowerCase() === 'nba';
+  
+  // Helper to check if a team should be excluded based on sport
+  const shouldExcludeTeam = (fullName: string): boolean => {
+    if (isCollegeSport) {
+      // For college sports, exclude NFL and NBA teams
+      return NFL_TEAMS.has(fullName) || NBA_TEAMS.has(fullName);
+    }
+    if (isNFL) {
+      // For NFL, exclude college teams (anything not in NFL_TEAMS or NBA_TEAMS could be college)
+      return !NFL_TEAMS.has(fullName) && !NBA_TEAMS.has(fullName);
+    }
+    if (isNBA) {
+      // For NBA, exclude college teams
+      return !NFL_TEAMS.has(fullName) && !NBA_TEAMS.has(fullName);
+    }
+    return false;
+  };
   
   // First pass: look for exact matches on full name or alias
   for (const [fullName, aliases] of Object.entries(TEAM_ALIASES)) {
+    if (shouldExcludeTeam(fullName)) continue;
     if (fullName.toLowerCase() === search) return fullName;
     for (const alias of aliases) {
       if (alias === search) {
@@ -969,6 +1306,7 @@ function findTeamMatch(searchText: string): string | null {
   // Second pass: prioritize matches where the full team name appears in the search text
   // This handles cases like "Kentucky Wildcats" matching "Kentucky" over "Arizona" (both have "wildcats" alias)
   for (const [fullName, aliases] of Object.entries(TEAM_ALIASES)) {
+    if (shouldExcludeTeam(fullName)) continue;
     const fullNameLower = fullName.toLowerCase();
     if (search.includes(fullNameLower)) {
       return fullName;
@@ -981,6 +1319,7 @@ function findTeamMatch(searchText: string): string | null {
   let bestMatchLength = 0;
   
   for (const [fullName, aliases] of Object.entries(TEAM_ALIASES)) {
+    if (shouldExcludeTeam(fullName)) continue;
     for (const alias of aliases) {
       // Check if the alias is contained in the search (e.g., search="ohio state", alias="ohio state")
       if (search.includes(alias) && alias.length > bestMatchLength) {
@@ -988,6 +1327,11 @@ function findTeamMatch(searchText: string): string | null {
         bestMatchLength = alias.length;
       }
     }
+  }
+  
+  // If no match found with sport filter, try without filter as fallback
+  if (!bestMatch && sport) {
+    return findTeamMatch(searchText); // Recurse without sport filter
   }
   
   return bestMatch;
@@ -1057,11 +1401,43 @@ function parsePickText(pickText: string): { team: string; spread?: number; overU
   });
   
   // Check for over/under bets in multiple formats
-  // 1. Explicit totals: "Team Over 54.5" or "Team1/Team2 Under 65.5"
+  // 0. Over/Under at START with number: "Over 56.5" or "Under 45.5"
+  const ouFirstMatch = text.match(/^(over|under)\s+(\d+\.?\d*)\s*$/i);
+  if (ouFirstMatch) {
+    const [, ouWord, total] = ouFirstMatch;
+    return {
+      team: ouWord.toLowerCase().startsWith('o') ? 'Over' : 'Under',
+      overUnder: parseFloat(total),
+      isOver: ouWord.toLowerCase().startsWith('o')
+    };
+  }
+  
+  // 1. Explicit totals: "Team Over 54.5" or "Team1/Team2 Under 65.5" or "Team1 Team2 Under 168"
   const explicitTotalMatch = text.match(/(.+?)\s+(over|under)\s+(\d+\.?\d*)\s*(?:[+-]\d+)?$/i);
   if (explicitTotalMatch) {
     const [, primaryTeamRaw, ouWord, total] = explicitTotalMatch;
-    const primaryTeam = applyTeamNameCorrections(primaryTeamRaw.trim());
+    let primaryTeam = applyTeamNameCorrections(primaryTeamRaw.trim());
+    
+    // Check if primaryTeam is two space-separated team names (e.g., "texas Georgia")
+    // Convert to slash-separated format for proper handling
+    if (!primaryTeam.includes('/') && !primaryTeam.includes(' @ ')) {
+      const words = primaryTeam.split(/\s+/);
+      // Check if we have exactly 2 words that might be team names
+      if (words.length === 2) {
+        const [first, second] = words;
+        // If both words look like potential team names (capitalize), join with /
+        const isLikelyTwoTeams = 
+          /^[A-Z]/i.test(first) && 
+          /^[A-Z]/i.test(second) &&
+          first.toLowerCase() !== 'state' && second.toLowerCase() !== 'state' &&
+          first.toLowerCase() !== 'new' && first.toLowerCase() !== 'san';
+        if (isLikelyTwoTeams) {
+          primaryTeam = `${first}/${second}`;
+          console.log(`[ESPN] Converted space-separated teams to slash format: "${primaryTeamRaw}" -> "${primaryTeam}"`);
+        }
+      }
+    }
+    
     return {
       team: primaryTeam,
       overUnder: parseFloat(total),
@@ -1325,6 +1701,14 @@ function extractGameDetails(
     coverMargin: probabilityInfo.coverMargin,
     projectedTotal: probabilityInfo.projectedTotal,
     betType: probabilityInfo.betType,
+    bovadaUrl: generateBovadaUrl(
+      sport, 
+      awayTeam.displayName, 
+      homeTeam.displayName, 
+      event.date,
+      awayCompetitor.curatedRank?.current,
+      homeCompetitor.curatedRank?.current
+    ),
   };
 }
 
@@ -1524,6 +1908,12 @@ export async function lookupGameByResolvedText(
   sport: string = 'nfl',
   pickText?: string
 ): Promise<GameDetails | null> {
+  // Check if this is a golf bet first
+  if (isGolfBet(pickText || '', resolvedText)) {
+    console.log('[ESPN] Detected golf bet, using golf lookup');
+    return lookupGolfBet(pickText || resolvedText, resolvedText);
+  }
+  
   // Detect sport from resolved text tags like (NCAAB), (NBA), (NFL), (FCS)
   const sportTagMatch = resolvedText.match(/\((NCAAB|NBA|NFL|FCS|NCAAF|CFB|NHL|MLB)\)\s*$/i);
   if (sportTagMatch) {
@@ -1544,6 +1934,28 @@ export async function lookupGameByResolvedText(
       sport = 'mlb';
     }
     console.log(`[ESPN] Detected sport from resolved text tag: ${sport}`);
+  } else if (pickText) {
+    // Also check pickText for sport tags since resolved text may not have one
+    const pickSportMatch = pickText.match(/\((NCAAB|NBA|NFL|FCS|NCAAF|CFB|NHL|MLB)\)/i);
+    if (pickSportMatch) {
+      const detectedSport = pickSportMatch[1].toLowerCase();
+      if (detectedSport === 'ncaab' || detectedSport === 'cbb') {
+        sport = 'ncaab';
+      } else if (detectedSport === 'nba') {
+        sport = 'nba';
+      } else if (detectedSport === 'nfl') {
+        sport = 'nfl';
+      } else if (detectedSport === 'fcs') {
+        sport = 'fcs';
+      } else if (detectedSport === 'ncaaf' || detectedSport === 'cfb') {
+        sport = 'ncaaf';
+      } else if (detectedSport === 'nhl') {
+        sport = 'nhl';
+      } else if (detectedSport === 'mlb') {
+        sport = 'mlb';
+      }
+      console.log(`[ESPN] Detected sport from pick text tag: ${sport}`);
+    }
   }
   
   // Parse the resolved text to extract team names
@@ -1554,9 +1966,9 @@ export async function lookupGameByResolvedText(
     const teamOnlyMatch = resolvedText.match(/^(.+?)\s*\(/);
     if (teamOnlyMatch) {
       const teamName = teamOnlyMatch[1].trim();
-      const canonicalTeam = findTeamMatch(teamName);
+      const canonicalTeam = findTeamMatch(teamName, sport);
       if (canonicalTeam) {
-        console.log(`[ESPN] Fallback lookup for team: ${canonicalTeam} (from "${teamName}")`);
+        console.log(`[ESPN] Fallback lookup for team: ${canonicalTeam} (from "${teamName}", sport: ${sport})`);
         // Try to find this team's game using resolvePickFromESPN logic
         const startDate = new Date();
         startDate.setDate(startDate.getDate() - 10);
@@ -1574,7 +1986,18 @@ export async function lookupGameByResolvedText(
           if (teamsMatch(canonicalTeam, homeTeam) || teamsMatch(canonicalTeam, awayTeam)) {
             const matchedTeam = teamsMatch(canonicalTeam, homeTeam) ? homeTeam.displayName : awayTeam.displayName;
             console.log(`[ESPN] Found game for ${canonicalTeam}: ${awayTeam.displayName} @ ${homeTeam.displayName}`);
-            const parsed = pickText ? parsePickText(pickText) : { team: matchedTeam };
+            // Parse both pickText and extract from resolved text
+            const textWithoutSportTag = resolvedText.replace(/\s*\((NCAAB|NBA|NFL|FCS|NCAAF|CFB|NHL|MLB)\)\s*$/i, '');
+            const pickMatch = textWithoutSportTag.match(/\(([^)]+)\)$/);
+            const parsedFromPick = pickText ? parsePickText(pickText) : { team: matchedTeam };
+            const parsedFromResolved = pickMatch ? parsePickText(pickMatch[1]) : { team: matchedTeam };
+            // Merge: prefer pickText for direction, use resolved for numeric values
+            const parsed: ParsedPick = {
+              team: parsedFromPick.team || parsedFromResolved.team || matchedTeam,
+              isOver: parsedFromPick.isOver ?? parsedFromResolved.isOver,
+              overUnder: parsedFromPick.overUnder ?? parsedFromResolved.overUnder,
+              spread: parsedFromPick.spread ?? parsedFromResolved.spread,
+            };
             return extractGameDetails(event, competition, matchedTeam, parsed, sport);
           }
         }
@@ -1588,12 +2011,13 @@ export async function lookupGameByResolvedText(
   const homeTeamRaw = match[2].trim();
   
   // Expand team aliases (e.g., "tt" -> "Texas Tech")
-  const awayTeamCanonical = findTeamMatch(awayTeamRaw);
-  const homeTeamCanonical = findTeamMatch(homeTeamRaw);
+  // Pass sport to avoid cross-sport conflicts (e.g., "Houston Cougars" shouldn't match "Houston Texans" for NCAAB)
+  const awayTeamCanonical = findTeamMatch(awayTeamRaw, sport);
+  const homeTeamCanonical = findTeamMatch(homeTeamRaw, sport);
   const awayTeamName = awayTeamCanonical || awayTeamRaw;
   const homeTeamName = homeTeamCanonical || homeTeamRaw;
 
-  console.log(`[ESPN] Looking up game: ${awayTeamName} @ ${homeTeamName} (raw: ${awayTeamRaw} @ ${homeTeamRaw})`);
+  console.log(`[ESPN] Looking up game: ${awayTeamName} @ ${homeTeamName} (raw: ${awayTeamRaw} @ ${homeTeamRaw}, sport: ${sport})`);
 
   // Fetch recent/upcoming games (last 10 days to next 7 days)
   // Extended window to cover bowl games that may have been played earlier in the week
@@ -1620,13 +2044,26 @@ export async function lookupGameByResolvedText(
     if (homeMatch && awayMatch) {
       console.log(`[ESPN] Found exact game match`);
       // Extract pick details from resolved text for the return
-      const pickMatch = resolvedText.match(/\(([^)]+)\)$/);
+      // Skip sport tags at the end like (NCAAB), (NBA), (NFL), (FCS)
+      const textWithoutSportTag = resolvedText.replace(/\s*\((NCAAB|NBA|NFL|FCS|NCAAF|CFB|NHL|MLB)\)\s*$/i, '');
+      const pickMatch = textWithoutSportTag.match(/\(([^)]+)\)$/);
       const fallbackMatched = pickMatch ? pickMatch[1] : homeTeam.displayName;
-      const parsedContext = pickText
-        ? parsePickText(pickText)
-        : pickMatch
-          ? parsePickText(pickMatch[1])
-          : { team: fallbackMatched } as ParsedPick;
+      
+      // Parse both pickText and resolved text, then merge
+      // The resolved text often has the spread/overUnder values that pickText lacks
+      const parsedFromPick = pickText ? parsePickText(pickText) : { team: '' };
+      const parsedFromResolved = pickMatch ? parsePickText(pickMatch[1]) : { team: fallbackMatched };
+      
+      // Merge: prefer pickText for isOver direction, but use resolved for numeric values
+      const parsedContext: ParsedPick = {
+        team: parsedFromPick.team || parsedFromResolved.team || fallbackMatched,
+        // Use pickText isOver if set, otherwise from resolved
+        isOver: parsedFromPick.isOver ?? parsedFromResolved.isOver,
+        // Use overUnder from pickText if available, otherwise from resolved
+        overUnder: parsedFromPick.overUnder ?? parsedFromResolved.overUnder,
+        // Use spread from pickText if available, otherwise from resolved
+        spread: parsedFromPick.spread ?? parsedFromResolved.spread,
+      };
 
       let matchedPickLabel = fallbackMatched;
 
@@ -1646,6 +2083,254 @@ export async function lookupGameByResolvedText(
 
   console.log(`[ESPN] Game not found for: ${awayTeamName} @ ${homeTeamName}`);
   return null;
+}
+
+/**
+ * Check if a pick is a golf/PGA bet
+ */
+export function isGolfBet(pickText: string, resolvedText?: string): boolean {
+  const text = `${pickText} ${resolvedText || ''}`.toLowerCase();
+  // Check for golf-related keywords
+  const golfKeywords = ['pga', 'golf', 'to win', 'outright winner', 'tournament winner'];
+  // Check for known golfer names (add more as needed)
+  const golferNames = [
+    'scheffler', 'mcilroy', 'rahm', 'koepka', 'dechambeau', 'hovland', 
+    'spieth', 'thomas', 'cantlay', 'morikawa', 'schauffele', 'finau',
+    'woodland', 'fowler', 'matsuyama', 'fleetwood', 'homa', 'kim'
+  ];
+  
+  const hasGolfKeyword = golfKeywords.some(kw => text.includes(kw));
+  const hasGolferName = golferNames.some(name => text.includes(name));
+  
+  // "to win" by itself is common in many sports, so require either golf keyword or golfer name
+  return hasGolfKeyword || (hasGolferName && (text.includes('to win') || text.includes('win')));
+}
+
+/**
+ * Extract golfer name from pick text
+ */
+function extractGolferName(pickText: string): string | null {
+  // Remove common suffixes
+  let text = pickText
+    .replace(/\s*\|\s*/g, ' ')
+    .replace(/\(?(legends?|leaders?|pga|golf)\)?/gi, '')
+    .replace(/to\s*win/gi, '')
+    .replace(/outright\s*winner/gi, '')
+    .replace(/tournament\s*winner/gi, '')
+    .trim();
+  
+  // Clean up multiple spaces
+  text = text.replace(/\s+/g, ' ').trim();
+  
+  return text || null;
+}
+
+/**
+ * Fetch current PGA tournament from ESPN
+ */
+async function fetchCurrentGolfTournament(): Promise<GolfTournament | null> {
+  try {
+    const url = 'https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard';
+    console.log(`[ESPN Golf] Fetching tournament from: ${url}`);
+    
+    const response = await fetch(url);
+    if (!response.ok) {
+      console.log(`[ESPN Golf] API error: ${response.status}`);
+      return null;
+    }
+    
+    const data = await response.json();
+    const events = data.events as GolfTournament[] | undefined;
+    
+    if (!events || events.length === 0) {
+      console.log('[ESPN Golf] No tournaments found');
+      return null;
+    }
+    
+    // Get the current/most recent tournament
+    const tournament = events[0];
+    console.log(`[ESPN Golf] Found tournament: ${tournament.name}, status: ${tournament.status?.type?.description}`);
+    
+    return tournament;
+  } catch (error) {
+    console.error('[ESPN Golf] Error fetching tournament:', error);
+    return null;
+  }
+}
+
+/**
+ * Find a golfer in a tournament by name
+ */
+function findGolferInTournament(tournament: GolfTournament, golferName: string): GolfCompetitor | null {
+  if (!tournament.competitions || tournament.competitions.length === 0) {
+    return null;
+  }
+  
+  const competitors = tournament.competitions[0].competitors;
+  const nameLower = golferName.toLowerCase();
+  
+  // Try exact match first, then partial match
+  const exactMatch = competitors.find(c => 
+    c.athlete.displayName.toLowerCase() === nameLower ||
+    c.athlete.fullName.toLowerCase() === nameLower
+  );
+  if (exactMatch) return exactMatch;
+  
+  // Partial match - check if the pick name is contained in golfer's full name
+  const partialMatch = competitors.find(c => {
+    const fullLower = c.athlete.fullName.toLowerCase();
+    const displayLower = c.athlete.displayName.toLowerCase();
+    // Split golfer name into parts and check if all parts match
+    const nameParts = nameLower.split(/\s+/);
+    return nameParts.every(part => fullLower.includes(part) || displayLower.includes(part));
+  });
+  if (partialMatch) return partialMatch;
+  
+  // Last name only match
+  const lastNameMatch = competitors.find(c => {
+    const lastName = c.athlete.displayName.split(' ').pop()?.toLowerCase();
+    return lastName && nameLower.includes(lastName);
+  });
+  
+  return lastNameMatch || null;
+}
+
+/**
+ * Look up a golf bet and return game details
+ */
+export async function lookupGolfBet(pickText: string, resolvedText?: string): Promise<GameDetails | null> {
+  const golferName = extractGolferName(resolvedText || pickText);
+  if (!golferName) {
+    console.log('[ESPN Golf] Could not extract golfer name from:', pickText);
+    return null;
+  }
+  
+  console.log(`[ESPN Golf] Looking up golfer: ${golferName}`);
+  
+  const tournament = await fetchCurrentGolfTournament();
+  if (!tournament) {
+    console.log('[ESPN Golf] No current tournament found');
+    return null;
+  }
+  
+  const golfer = findGolferInTournament(tournament, golferName);
+  if (!golfer) {
+    console.log(`[ESPN Golf] Golfer not found: ${golferName}`);
+    return null;
+  }
+  
+  console.log(`[ESPN Golf] Found golfer: ${golfer.athlete.displayName}, Position: ${golfer.order}, Score: ${golfer.score}`);
+  
+  // Determine tournament status
+  const tournamentState = tournament.status?.type?.state;
+  const isCompleted = tournament.status?.type?.completed;
+  
+  let status: 'scheduled' | 'live' | 'final';
+  let statusDetail: string;
+  
+  if (isCompleted || tournamentState === 'post') {
+    status = 'final';
+    statusDetail = 'Final';
+  } else if (tournamentState === 'in') {
+    status = 'live';
+    // Try to determine current round
+    const roundCount = golfer.linescores?.length || 0;
+    statusDetail = `Round ${roundCount} - Position: ${golfer.order}`;
+  } else {
+    status = 'scheduled';
+    statusDetail = tournament.status?.type?.description || 'Scheduled';
+  }
+  
+  // Calculate "win probability" based on position and round
+  // This is a rough heuristic - closer to 1st place = higher probability
+  let winProbability: number | undefined;
+  let gameProgress: number | undefined;
+  
+  const totalRounds = 4; // Standard PGA tournament
+  const currentRound = golfer.linescores?.length || 0;
+  gameProgress = currentRound / totalRounds;
+  
+  if (status !== 'scheduled') {
+    // Rough probability based on position
+    // Position 1 = high probability, position 50+ = very low
+    if (golfer.order === 1) {
+      winProbability = 0.7 + (gameProgress * 0.25); // 70-95% if in 1st
+    } else if (golfer.order <= 3) {
+      winProbability = 0.3 + (0.1 / golfer.order);
+    } else if (golfer.order <= 10) {
+      winProbability = 0.15 - (golfer.order * 0.01);
+    } else {
+      winProbability = Math.max(0.01, 0.1 - (golfer.order * 0.002));
+    }
+    winProbability = Math.min(0.99, Math.max(0.01, winProbability));
+  }
+  
+  // Determine result if tournament is final
+  let resultText = '';
+  if (status === 'final') {
+    if (golfer.order === 1) {
+      resultText = 'WIN - Tournament Champion';
+    } else {
+      resultText = `LOSS - Finished ${getOrdinal(golfer.order)}`;
+    }
+  }
+  
+  const gameDetails: GameDetails = {
+    gameId: tournament.id,
+    gameName: tournament.name,
+    shortName: tournament.shortName,
+    homeTeam: tournament.name, // Tournament name as "home team"
+    awayTeam: golfer.athlete.displayName, // Golfer as "away team"
+    homeAbbrev: 'PGA',
+    awayAbbrev: golfer.athlete.shortName,
+    gameDate: tournament.date,
+    gameDateFormatted: formatGolfDate(tournament.date, tournament.endDate),
+    venue: tournament.name,
+    broadcasts: ['Golf Channel', 'CBS'],
+    status,
+    statusDetail: resultText || statusDetail,
+    matchedTeam: golfer.athlete.displayName,
+    resolvedText: `${golfer.athlete.displayName} to win ${tournament.name}`,
+    winProbability,
+    gameProgress,
+    isGolfTournament: true,
+    tournamentName: tournament.name,
+    golferName: golfer.athlete.displayName,
+    golferPosition: golfer.order,
+    golferScore: golfer.score,
+    tournamentRound: currentRound,
+    totalRounds,
+  };
+  
+  return gameDetails;
+}
+
+/**
+ * Format golf tournament date range
+ */
+function formatGolfDate(startDate: string, endDate: string): string {
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  
+  const options: Intl.DateTimeFormatOptions = {
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'America/Chicago',
+  };
+  
+  const startStr = start.toLocaleDateString('en-US', options);
+  const endStr = end.toLocaleDateString('en-US', options);
+  
+  return `${startStr} - ${endStr}`;
+}
+
+/**
+ * Get ordinal suffix for a number (1st, 2nd, 3rd, etc.)
+ */
+function getOrdinal(n: number): string {
+  const s = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
 }
 
 /**

@@ -60,6 +60,15 @@ export interface Pick {
   possession?: 'home' | 'away';
   possessionTeamId?: string;
   possessionText?: string;
+  bovadaUrl?: string; // Deep link to Bovada game page
+  // Golf-specific fields
+  isGolfTournament?: boolean;
+  tournamentName?: string;
+  golferName?: string;
+  golferPosition?: number;
+  golferScore?: string;
+  tournamentRound?: number;
+  totalRounds?: number;
 }
 
 // Mock Data Generator

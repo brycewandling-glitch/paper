@@ -5,6 +5,50 @@ import { getSheetData, appendToSheet, getSheetRawValues, updateSheetValues, upda
 import { resolvePickToGameServer } from './pickResolver';
 import { resolvePickFromESPN, getWeekDate, lookupGameByResolvedText, detectSport, type GameDetails } from './espnResolver';
 import { ensureWeekRowExists } from './weekManager';
+import { archiveWeekGameData, checkAndArchiveReadyWeeks, getArchivedGameData, parseArchivedGameData } from './gameArchiver';
+
+/**
+ * Extract potential team name hints from pick text.
+ * Returns lowercase team hints for comparison.
+ */
+function extractTeamHintsFromPick(pickText: string): string[] {
+  if (!pickText) return [];
+  
+  // Remove bet type indicators and special markers
+  let cleaned = pickText
+    .replace(/\((NCAAB|NBA|NFL|FCS|NCAAF|CFB|NHL|MLB|leaders?|dogs?|favorites?)\)/gi, '')
+    .replace(/\b(over|under|ml|moneyline|spread)\b/gi, '')
+    .replace(/[+-]?\d+\.?\d*/g, '') // Remove numbers (spreads, totals)
+    .replace(/\|/g, ' ') // Replace pipe with space
+    .replace(/\//g, ' ') // Replace slash with space  
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+  
+  // Split into potential team names and filter out empty/short strings
+  const words = cleaned.split(/\s+/).filter(w => w.length >= 2);
+  return words;
+}
+
+/**
+ * Check if pick text team hints are present in resolved text.
+ * Returns true if at least one significant team hint is found.
+ */
+function pickMatchesResolved(pickText: string, resolvedText: string): boolean {
+  const pickHints = extractTeamHintsFromPick(pickText);
+  const resolvedLower = resolvedText.toLowerCase();
+  
+  // Known team name keywords that should match
+  const significantMatches = pickHints.filter(hint => {
+    // Skip common non-team words
+    if (['the', 'and', 'state', 'university'].includes(hint)) return false;
+    return resolvedLower.includes(hint);
+  });
+  
+  // Need at least one significant team hint to match
+  // For picks like "texas Georgia", we expect "texas" or "georgia" to appear in resolved
+  return significantMatches.length > 0;
+}
 
 export async function registerRoutes(
   httpServer: Server,
@@ -295,7 +339,14 @@ export async function registerRoutes(
       let gameDetails: GameDetails | null = null;
       const hasMatchupFormatting = /@/.test(resolvedText);
       
-      if (hasMatchupFormatting) {
+      // Check for golf bet first (doesn't have @ formatting)
+      const isGolfBet = /golf|pga|to\s*win|scheffler|mcilroy|rahm|koepka/i.test(resolvedText) || 
+                        /golf|pga|to\s*win|scheffler|mcilroy|rahm|koepka/i.test(pickText || '');
+      
+      if (isGolfBet) {
+        // Use the golf lookup directly
+        gameDetails = await lookupGameByResolvedText(resolvedText, 'pga', pickText);
+      } else if (hasMatchupFormatting) {
         gameDetails = await lookupGameByResolvedText(resolvedText, lookupSport, pickText);
       }
 
@@ -356,6 +407,10 @@ export async function registerRoutes(
         return res.status(404).json({ error: `Week ${weekNumber} not found` });
       }
       
+      // Check for archived game data first
+      const archivedData = await getArchivedGameData(sheet, weekNumber);
+      const hasArchivedData = archivedData && archivedData.size > 0;
+      
       // Extract player picks and their resolved values
       const picks: Array<{
         player: string;
@@ -363,6 +418,7 @@ export async function registerRoutes(
         resolved: string;
         betAmount: string;
         gameDetails?: GameDetails;
+        fromArchive?: boolean;
       }> = [];
       
       // Known player names (these should have corresponding bet amount and resolved columns)
@@ -391,18 +447,98 @@ export async function registerRoutes(
         const resolved = resolvedCol ? String(weekRow[resolvedCol] || '').trim() : '';
         const betAmount = betAmountCol ? String(weekRow[betAmountCol] || '').trim() : '';
         
-        // Look up game details if we have a resolved value
+        // Look up game details - first check archived data, then ESPN
         let gameDetails: GameDetails | undefined;
+        let fromArchive = false;
+        
         if (resolved && !resolved.startsWith('Tail') && !resolved.startsWith('Reverse Tail')) {
-          try {
-            // Detect sport from the resolved text
-            const sport = detectSport(resolved);
-            const details = await lookupGameByResolvedText(resolved, sport, pickText);
-            if (details) {
-              gameDetails = details;
+          // Check archived data first
+          if (hasArchivedData && archivedData!.has(playerName)) {
+            const archivedStr = archivedData!.get(playerName)!;
+            const parsed = parseArchivedGameData(archivedStr);
+            if (parsed) {
+              // Merge with resolved text info
+              gameDetails = {
+                gameId: 'archived',
+                gameName: `${parsed.awayTeam} at ${parsed.homeTeam}`,
+                shortName: `${parsed.awayTeam?.split(' ').pop()} @ ${parsed.homeTeam?.split(' ').pop()}`,
+                homeTeam: parsed.homeTeam || '',
+                awayTeam: parsed.awayTeam || '',
+                homeAbbrev: parsed.homeTeam?.split(' ').pop()?.toUpperCase().slice(0, 4) || '',
+                awayAbbrev: parsed.awayTeam?.split(' ').pop()?.toUpperCase().slice(0, 4) || '',
+                gameDate: '',
+                gameDateFormatted: '',
+                broadcasts: [],
+                status: 'final',
+                statusDetail: 'Final',
+                homeScore: parsed.homeScore,
+                awayScore: parsed.awayScore,
+                matchedTeam: parsed.homeTeam || parsed.awayTeam || '',
+                resolvedText: resolved,
+                spread: parsed.spread,
+                overUnder: parsed.overUnder,
+                betType: parsed.betType,
+                coverMargin: parsed.coverMargin,
+                projectedTotal: parsed.projectedTotal,
+                gameProgress: 1,
+                secondsRemaining: 0,
+                winProbability: parsed.coverMargin !== undefined ? (parsed.coverMargin > 0 ? 0.995 : 0.005) : 
+                               parsed.projectedTotal !== undefined && parsed.overUnder !== undefined ? 
+                               (resolved.toLowerCase().includes('over') ? 
+                                 (parsed.projectedTotal > parsed.overUnder ? 0.995 : 0.005) :
+                                 (parsed.projectedTotal < parsed.overUnder ? 0.995 : 0.005)) : 0.5,
+                probabilitySource: 'heuristic',
+                winConfidence: parsed.coverMargin !== undefined ? (parsed.coverMargin > 0 ? 'likely_win' : parsed.coverMargin < 0 ? 'likely_loss' : 'coin_flip') :
+                              parsed.projectedTotal !== undefined && parsed.overUnder !== undefined ?
+                              (resolved.toLowerCase().includes('over') ?
+                                (parsed.projectedTotal > parsed.overUnder ? 'likely_win' : 'likely_loss') :
+                                (parsed.projectedTotal < parsed.overUnder ? 'likely_win' : 'likely_loss')) : 'coin_flip',
+              };
+              fromArchive = true;
             }
-          } catch (e) {
-            console.error(`Failed to lookup game for ${playerName}:`, e);
+          }
+          
+          // Fall back to ESPN if no archived data
+          if (!gameDetails) {
+            try {
+              // Detect sport from resolved text first, then pick text as fallback
+              let sport = detectSport(resolved);
+              if (sport === 'nfl' && pickText) {
+                // If defaulting to NFL, check if pick text specifies a different sport
+                const pickSport = detectSport(pickText);
+                if (pickSport !== 'nfl') {
+                  sport = pickSport;
+                }
+              }
+              
+              // Check if pick text teams match resolved text teams
+              // If they don't match, the resolved text is probably wrong - re-resolve from pickText
+              const teamsMatch = pickText ? pickMatchesResolved(pickText, resolved) : true;
+              
+              if (!teamsMatch && pickText) {
+                // When teams mismatch, always use sport from pickText since resolved is wrong
+                const pickSport = detectSport(pickText);
+                console.log(`[Week-Picks] Teams mismatch detected for ${playerName}: pick="${pickText}" vs resolved="${resolved}". Re-resolving from pick text with sport: ${pickSport}`);
+                const weekDate = await getWeekDate(data, weekNumber);
+                if (weekDate) {
+                  const freshDetails = await resolvePickFromESPN(weekDate, pickText, pickSport);
+                  if (freshDetails) {
+                    gameDetails = freshDetails;
+                    console.log(`[Week-Picks] Re-resolved to: ${freshDetails.gameName}`);
+                  }
+                }
+              }
+              
+              // If still no details (or teams matched), use normal lookup
+              if (!gameDetails) {
+                const details = await lookupGameByResolvedText(resolved, sport, pickText);
+                if (details) {
+                  gameDetails = details;
+                }
+              }
+            } catch (e) {
+              console.error(`Failed to lookup game for ${playerName}:`, e);
+            }
           }
         }
         
@@ -411,11 +547,12 @@ export async function registerRoutes(
           pick: pickText,
           resolved,
           betAmount,
-          gameDetails
+          gameDetails,
+          fromArchive
         });
       }
       
-      res.json({ week: weekNumber, picks });
+      res.json({ week: weekNumber, picks, hasArchivedData });
     } catch (error) {
       console.error("API /week-picks error:", error);
       res.status(500).json({ error: String(error) });
@@ -696,6 +833,52 @@ export async function registerRoutes(
       res.json({ sheet, createdColumns: resolvedInsertPositions.map(p => p.name + ' Resolved'), rowsWritten: newValues.length - 1 });
     } catch (error) {
       console.error('/api/annotate-season error', error);
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  // Archive game data for a specific week
+  app.post("/api/archive-week", async (req, res) => {
+    try {
+      const sheet = typeof req.body?.sheet === 'string' ? req.body.sheet : 'Season 4';
+      const weekNumber = Number(req.body?.week);
+      const force = Boolean(req.body?.force);
+      
+      if (!weekNumber || Number.isNaN(weekNumber) || weekNumber <= 0) {
+        return res.status(400).json({ error: 'Valid week number is required' });
+      }
+      
+      const result = await archiveWeekGameData(sheet, weekNumber, force);
+      
+      if (result) {
+        res.json({ 
+          success: true, 
+          message: `Archived game data for Week ${weekNumber}`,
+          result 
+        });
+      } else {
+        res.json({ 
+          success: false, 
+          message: `Week ${weekNumber} was not archived (may already be archived, not ready, or before minimum week)` 
+        });
+      }
+    } catch (error) {
+      console.error('/api/archive-week error:', error);
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  // Check and archive all ready weeks
+  app.post("/api/archive-all-ready", async (req, res) => {
+    try {
+      const results = await checkAndArchiveReadyWeeks();
+      res.json({
+        success: true,
+        message: `Archived ${results.length} weeks`,
+        results
+      });
+    } catch (error) {
+      console.error('/api/archive-all-ready error:', error);
       res.status(500).json({ error: String(error) });
     }
   });
