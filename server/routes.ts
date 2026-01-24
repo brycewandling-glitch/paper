@@ -10,13 +10,18 @@ import { archiveWeekGameData, checkAndArchiveReadyWeeks, getArchivedGameData, pa
 /**
  * Extract potential team name hints from pick text.
  * Returns lowercase team hints for comparison.
+ * Also returns whether this appears to be a two-team pick.
  */
-function extractTeamHintsFromPick(pickText: string): string[] {
-  if (!pickText) return [];
+function extractTeamHintsFromPick(pickText: string): { hints: string[], isTwoTeamPick: boolean } {
+  if (!pickText) return { hints: [], isTwoTeamPick: false };
+  
+  // Check if this is a two-team pick (has / or space-separated teams before over/under)
+  const isTwoTeamPick = /\w+\s*\/\s*\w+/.test(pickText) || 
+                        /^\s*\w+\s+\w+\s*\|?\s*(over|under)/i.test(pickText);
   
   // Remove bet type indicators and special markers
   let cleaned = pickText
-    .replace(/\((NCAAB|NBA|NFL|FCS|NCAAF|CFB|NHL|MLB|leaders?|dogs?|favorites?)\)/gi, '')
+    .replace(/\((NCAAB|NBA|NFL|FCS|NCAAF|CFB|NHL|MLB|leaders?|dogs?|favorites?|legends?)\)/gi, '')
     .replace(/\b(over|under|ml|moneyline|spread)\b/gi, '')
     .replace(/[+-]?\d+\.?\d*/g, '') // Remove numbers (spreads, totals)
     .replace(/\|/g, ' ') // Replace pipe with space
@@ -26,16 +31,17 @@ function extractTeamHintsFromPick(pickText: string): string[] {
     .toLowerCase();
   
   // Split into potential team names and filter out empty/short strings
-  const words = cleaned.split(/\s+/).filter(w => w.length >= 2);
-  return words;
+  const hints = cleaned.split(/\s+/).filter(w => w.length >= 2);
+  return { hints, isTwoTeamPick };
 }
 
 /**
  * Check if pick text team hints are present in resolved text.
- * Returns true if at least one significant team hint is found.
+ * For two-team picks (like "UMN/NE"), BOTH teams must appear in resolved.
+ * For single team picks, at least one hint must match.
  */
 function pickMatchesResolved(pickText: string, resolvedText: string): boolean {
-  const pickHints = extractTeamHintsFromPick(pickText);
+  const { hints: pickHints, isTwoTeamPick } = extractTeamHintsFromPick(pickText);
   const resolvedLower = resolvedText.toLowerCase();
   
   // Known team name keywords that should match
@@ -45,8 +51,15 @@ function pickMatchesResolved(pickText: string, resolvedText: string): boolean {
     return resolvedLower.includes(hint);
   });
   
-  // Need at least one significant team hint to match
-  // For picks like "texas Georgia", we expect "texas" or "georgia" to appear in resolved
+  // For two-team picks (over/under with both teams), require ALL team hints to match
+  // For single team picks, require at least one significant hint to match
+  if (isTwoTeamPick) {
+    // Filter to just the significant hints (exclude common words)
+    const significantHints = pickHints.filter(h => !['the', 'and', 'state', 'university'].includes(h));
+    // All significant hints must match
+    return significantHints.length > 0 && significantMatches.length === significantHints.length;
+  }
+  
   return significantMatches.length > 0;
 }
 
