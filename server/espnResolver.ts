@@ -231,6 +231,15 @@ interface GolfTournament {
   competitions: Array<{
     id: string;
     competitors: GolfCompetitor[];
+    status?: {
+      period?: number;  // Current round number
+      type?: {
+        state: 'pre' | 'in' | 'post';
+        completed: boolean;
+        description: string;
+        detail?: string;
+      };
+    };
   }>;
 }
 
@@ -251,6 +260,14 @@ const SPORT_ENDPOINTS: Record<string, string> = {
   'mls': 'soccer/usa.1',
   'epl': 'soccer/eng.1',
   'premier league': 'soccer/eng.1',
+  'laliga': 'soccer/esp.1',
+  'la liga': 'soccer/esp.1',
+  'spanish': 'soccer/esp.1',
+  'bundesliga': 'soccer/ger.1',
+  'serie a': 'soccer/ita.1',
+  'ligue 1': 'soccer/fra.1',
+  'champions league': 'soccer/uefa.champions',
+  'ucl': 'soccer/uefa.champions',
   'golf': 'golf/pga',
   'pga': 'golf/pga',
 };
@@ -581,6 +598,66 @@ const TEAM_ID_OVERRIDES: Record<string, { teamId: string }> = {
   'Delaware': { teamId: '48' },
 };
 
+// Soccer team aliases - maps display names to common input variations
+const SOCCER_TEAM_ALIASES: Record<string, { aliases: string[], league: string }> = {
+  // La Liga (Spain)
+  'Real Madrid': { aliases: ['real madrid', 'real', 'madrid', 'los blancos'], league: 'laliga' },
+  'Barcelona': { aliases: ['barcelona', 'barca', 'fcb', 'fc barcelona'], league: 'laliga' },
+  'Atlético Madrid': { aliases: ['atletico madrid', 'atletico', 'atleti'], league: 'laliga' },
+  'Sevilla': { aliases: ['sevilla', 'sevilla fc'], league: 'laliga' },
+  'Real Sociedad': { aliases: ['real sociedad', 'sociedad'], league: 'laliga' },
+  'Real Betis': { aliases: ['real betis', 'betis'], league: 'laliga' },
+  'Athletic Club': { aliases: ['athletic club', 'athletic bilbao', 'bilbao'], league: 'laliga' },
+  'Villarreal': { aliases: ['villarreal', 'yellow submarine'], league: 'laliga' },
+  'Valencia': { aliases: ['valencia', 'valencia cf'], league: 'laliga' },
+  // Premier League (England)
+  'Manchester City': { aliases: ['man city', 'manchester city', 'city', 'mcfc'], league: 'epl' },
+  'Manchester United': { aliases: ['man united', 'manchester united', 'man utd', 'united', 'mufc'], league: 'epl' },
+  'Liverpool': { aliases: ['liverpool', 'lfc', 'the reds'], league: 'epl' },
+  'Arsenal': { aliases: ['arsenal', 'gunners', 'afc'], league: 'epl' },
+  'Chelsea': { aliases: ['chelsea', 'blues', 'cfc'], league: 'epl' },
+  'Tottenham Hotspur': { aliases: ['tottenham', 'spurs', 'tottenham hotspur', 'thfc'], league: 'epl' },
+  'Newcastle United': { aliases: ['newcastle', 'newcastle united', 'magpies', 'nufc'], league: 'epl' },
+  'Aston Villa': { aliases: ['aston villa', 'villa', 'avfc'], league: 'epl' },
+  'Brighton': { aliases: ['brighton', 'brighton & hove albion', 'seagulls'], league: 'epl' },
+  'West Ham': { aliases: ['west ham', 'west ham united', 'hammers', 'whufc'], league: 'epl' },
+  // Bundesliga (Germany)
+  'Bayern Munich': { aliases: ['bayern munich', 'bayern', 'fcb', 'fc bayern'], league: 'bundesliga' },
+  'Borussia Dortmund': { aliases: ['borussia dortmund', 'dortmund', 'bvb'], league: 'bundesliga' },
+  'RB Leipzig': { aliases: ['rb leipzig', 'leipzig'], league: 'bundesliga' },
+  'Bayer Leverkusen': { aliases: ['bayer leverkusen', 'leverkusen'], league: 'bundesliga' },
+  // Serie A (Italy)
+  'Juventus': { aliases: ['juventus', 'juve'], league: 'serie a' },
+  'AC Milan': { aliases: ['ac milan', 'milan'], league: 'serie a' },
+  'Inter Milan': { aliases: ['inter milan', 'inter', 'internazionale'], league: 'serie a' },
+  'Napoli': { aliases: ['napoli'], league: 'serie a' },
+  'AS Roma': { aliases: ['roma', 'as roma'], league: 'serie a' },
+  // Ligue 1 (France)
+  'Paris Saint-Germain': { aliases: ['paris saint-germain', 'psg', 'paris'], league: 'ligue 1' },
+  'Marseille': { aliases: ['marseille', 'olympique marseille', 'om'], league: 'ligue 1' },
+  'Lyon': { aliases: ['lyon', 'olympique lyonnais', 'ol'], league: 'ligue 1' },
+  'Monaco': { aliases: ['monaco', 'as monaco'], league: 'ligue 1' },
+};
+
+/**
+ * Detect if text contains a known soccer team and return the team info
+ */
+function detectSoccerTeam(text: string): { name: string; league: string } | null {
+  const textLower = text.toLowerCase();
+  
+  for (const [teamName, info] of Object.entries(SOCCER_TEAM_ALIASES)) {
+    for (const alias of info.aliases) {
+      // Use word boundary check to avoid partial matches
+      const regex = new RegExp(`\\b${alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+      if (regex.test(textLower)) {
+        return { name: teamName, league: info.league };
+      }
+    }
+  }
+  
+  return null;
+}
+
 
 const TEAM_NAME_CORRECTIONS: Record<string, string> = {
   'virgina': 'virginia',
@@ -669,6 +746,13 @@ const SPORT_TIMING_CONFIG: Record<string, { regulationPeriods: number; secondsPe
   nhl: { regulationPeriods: 3, secondsPerPeriod: 1200 },
   soccer: { regulationPeriods: 2, secondsPerPeriod: 2700 },
   mls: { regulationPeriods: 2, secondsPerPeriod: 2700 },
+  laliga: { regulationPeriods: 2, secondsPerPeriod: 2700 },
+  epl: { regulationPeriods: 2, secondsPerPeriod: 2700 },
+  bundesliga: { regulationPeriods: 2, secondsPerPeriod: 2700 },
+  'serie a': { regulationPeriods: 2, secondsPerPeriod: 2700 },
+  'ligue 1': { regulationPeriods: 2, secondsPerPeriod: 2700 },
+  'champions league': { regulationPeriods: 2, secondsPerPeriod: 2700 },
+  ucl: { regulationPeriods: 2, secondsPerPeriod: 2700 },
 };
 
 const DEFAULT_TIMING = { regulationPeriods: 4, secondsPerPeriod: 900 };
@@ -704,10 +788,23 @@ function computeGameTimingMeta(status: ESPNStatus | undefined, sport: string): G
 
   const perPeriod = config.secondsPerPeriod;
   let elapsedSeconds = 0;
+  
+  // Check if this is a soccer sport (clock counts UP and shows total match time)
+  const isSoccerSport = ['soccer', 'mls', 'laliga', 'epl', 'bundesliga', 'serie a', 'ligue 1', 'champions league', 'ucl'].includes(sport.toLowerCase());
+  
   if (perPeriod > 0 && clockSeconds !== undefined) {
-    const completedPeriods = Math.max(0, period - 1);
-    const clampedClock = Math.min(perPeriod, clockSeconds);
-    elapsedSeconds = (completedPeriods * perPeriod) + (perPeriod - clampedClock);
+    if (isSoccerSport) {
+      // Soccer: clock shows total match time elapsed (e.g., 56' = 3360 seconds)
+      // Total match is 90 minutes = 5400 seconds (2 x 45 min)
+      // Just use the clock value directly as elapsed time
+      elapsedSeconds = clockSeconds;
+    } else {
+      // Other sports: clock counts DOWN from period length to 0
+      // clockSeconds represents remaining time in current period
+      const completedPeriods = Math.max(0, period - 1);
+      const clampedClock = Math.min(perPeriod, clockSeconds);
+      elapsedSeconds = (completedPeriods * perPeriod) + (perPeriod - clampedClock);
+    }
   } else {
     elapsedSeconds = Math.max(0, (period - 1) * perPeriod);
   }
@@ -1497,13 +1594,16 @@ function parsePickText(pickText: string): { team: string; spread?: number; overU
     };
   }
   
-  // Check for spread (e.g., "Vikings +3" or "Chiefs -7.5")
-  const spreadMatch = text.match(/(.+?)\s*([+-]\d+\.?\d*)\s*$/);
+  // Check for spread (e.g., "Vikings +3" or "Chiefs -7.5" or "Real Madrid -.5")
+  // Handle both with and without space before the spread
+  const spreadMatch = text.match(/(.+?)\s*([+-]\s*\d*\.?\d+)\s*$/);
   if (spreadMatch) {
     const teamName = applyTeamNameCorrections(spreadMatch[1].trim());
+    // Remove any spaces from the spread value (e.g., "- .5" -> "-.5")
+    const spreadValue = spreadMatch[2].replace(/\s+/g, '');
     return {
       team: teamName,
-      spread: parseFloat(spreadMatch[2])
+      spread: parseFloat(spreadValue)
     };
   }
   
@@ -1539,11 +1639,22 @@ function extractGameDetails(
   matchedTeam: string,
   parsedPick: { spread?: number; overUnder?: number; isOver?: boolean },
   sport: string
-): GameDetails {
-  const homeCompetitor = competition.competitors.find(c => c.homeAway === 'home')!;
-  const awayCompetitor = competition.competitors.find(c => c.homeAway === 'away')!;
+): GameDetails | null {
+  const homeCompetitor = competition.competitors?.find(c => c.homeAway === 'home');
+  const awayCompetitor = competition.competitors?.find(c => c.homeAway === 'away');
+  
+  if (!homeCompetitor || !awayCompetitor) {
+    console.log('[ESPN] Missing home or away competitor in competition');
+    return null;
+  }
+  
   const homeTeam = homeCompetitor.team;
   const awayTeam = awayCompetitor.team;
+  
+  if (!homeTeam || !awayTeam) {
+    console.log('[ESPN] Missing home or away team in competitor');
+    return null;
+  }
 
   // Get odds if available
   let spread: number | undefined;
@@ -1556,12 +1667,12 @@ function extractGameDetails(
 
   if (competition.odds && competition.odds.length > 0) {
     const odds = competition.odds[0];
-    spread = odds.spread;
-    overUnder = odds.overUnder;
-    homeSpreadOdds = odds.homeTeamOdds?.spreadOdds;
-    awaySpreadOdds = odds.awayTeamOdds?.spreadOdds;
-    homeMoneylineOdds = odds.homeTeamOdds?.moneyLine;
-    awayMoneylineOdds = odds.awayTeamOdds?.moneyLine;
+    spread = odds?.spread;
+    overUnder = odds?.overUnder;
+    homeSpreadOdds = odds?.homeTeamOdds?.spreadOdds;
+    awaySpreadOdds = odds?.awayTeamOdds?.spreadOdds;
+    homeMoneylineOdds = odds?.homeTeamOdds?.moneyLine;
+    awayMoneylineOdds = odds?.awayTeamOdds?.moneyLine;
 
     // Determine favorite from odds details (e.g., "KC -7.5")
     if (odds.details) {
@@ -1676,7 +1787,7 @@ function extractGameDetails(
     statusDetail,
     homeScore,
     awayScore,
-    spread,
+    spread: appliedSpread ?? spread,
     overUnder,
     favoriteTeam,
     homeSpreadOdds,
@@ -1900,6 +2011,99 @@ export async function resolvePickFromESPN(
 }
 
 /**
+ * Look up a soccer game by team name
+ * Searches ESPN soccer API for the team in the specified league
+ */
+async function lookupSoccerGame(pickText: string, resolvedText: string, league: string): Promise<GameDetails | null> {
+  // Extract team name from pick text (e.g., "Real Madrid | -.5" -> "Real Madrid")
+  const teamNameMatch = pickText.match(/^([^|]+)/);
+  const searchTeam = teamNameMatch ? teamNameMatch[1].trim() : pickText.trim();
+  
+  console.log(`[ESPN Soccer] Looking for "${searchTeam}" in ${league}`);
+  
+  // Map league name to ESPN endpoint
+  const leagueEndpoints: Record<string, string> = {
+    'laliga': 'soccer/esp.1',
+    'la liga': 'soccer/esp.1',
+    'epl': 'soccer/eng.1',
+    'premier league': 'soccer/eng.1',
+    'bundesliga': 'soccer/ger.1',
+    'serie a': 'soccer/ita.1',
+    'ligue 1': 'soccer/fra.1',
+    'mls': 'soccer/usa.1',
+    'soccer': 'soccer/usa.1',
+    'champions league': 'soccer/uefa.champions',
+    'ucl': 'soccer/uefa.champions',
+  };
+  
+  const endpoint = leagueEndpoints[league.toLowerCase()] || 'soccer/esp.1';
+  
+  try {
+    // Fetch games from ESPN
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - 3);
+    const endDate = new Date();
+    endDate.setDate(endDate.getDate() + 7);
+    
+    const startStr = startDate.toISOString().split('T')[0].replace(/-/g, '');
+    const endStr = endDate.toISOString().split('T')[0].replace(/-/g, '');
+    
+    const url = `https://site.api.espn.com/apis/site/v2/sports/${endpoint}/scoreboard?dates=${startStr}-${endStr}`;
+    console.log(`[ESPN Soccer] Fetching from: ${url}`);
+    
+    const response = await fetch(url);
+    if (!response.ok) {
+      console.log(`[ESPN Soccer] API error: ${response.status}`);
+      return null;
+    }
+    
+    const data = await response.json();
+    const events = data.events as Array<any> | undefined;
+    
+    if (!events || events.length === 0) {
+      console.log(`[ESPN Soccer] No events found for ${league}`);
+      return null;
+    }
+    
+    // Search for the team in the events
+    const searchLower = searchTeam.toLowerCase();
+    
+    for (const event of events) {
+      if (!event.competitions || event.competitions.length === 0) continue;
+      const competition = event.competitions[0];
+      const homeTeam = competition.competitors?.find((c: any) => c.homeAway === 'home')?.team;
+      const awayTeam = competition.competitors?.find((c: any) => c.homeAway === 'away')?.team;
+      
+      if (!homeTeam || !awayTeam) continue;
+      
+      const homeNameLower = (homeTeam.displayName || homeTeam.name || '').toLowerCase();
+      const awayNameLower = (awayTeam.displayName || awayTeam.name || '').toLowerCase();
+      
+      // Check if search term matches either team
+      const matchesHome = homeNameLower.includes(searchLower) || searchLower.includes(homeNameLower.split(' ')[0]);
+      const matchesAway = awayNameLower.includes(searchLower) || searchLower.includes(awayNameLower.split(' ')[0]);
+      
+      if (matchesHome || matchesAway) {
+        const matchedTeam = matchesHome ? homeTeam.displayName : awayTeam.displayName;
+        console.log(`[ESPN Soccer] Found match: ${awayTeam.displayName} @ ${homeTeam.displayName}`);
+        
+        // Parse pick details from pickText
+        const parsed = parsePickText(pickText);
+        
+        // Extract game details
+        return extractGameDetails(event, competition, matchedTeam, parsed, league);
+      }
+    }
+    
+    console.log(`[ESPN Soccer] No match found for "${searchTeam}" in ${league}`);
+    return null;
+  } catch (error) {
+    console.error('[ESPN Soccer] Error:', error);
+    return null;
+  }
+}
+
+/**
  * Look up a game by its resolved text to get current/final data
  * This is used to refresh game data after initial resolution
  */
@@ -1914,8 +2118,16 @@ export async function lookupGameByResolvedText(
     return lookupGolfBet(pickText || resolvedText, resolvedText);
   }
   
+  // Check if this is a soccer bet by detecting soccer team names
+  const textToCheck = (pickText || '') + ' ' + resolvedText;
+  const soccerTeam = detectSoccerTeam(textToCheck);
+  if (soccerTeam) {
+    console.log(`[ESPN] Detected soccer bet: ${soccerTeam.name} (league: ${soccerTeam.league})`);
+    sport = soccerTeam.league;
+  }
+  
   // Detect sport from resolved text tags like (NCAAB), (NBA), (NFL), (FCS)
-  const sportTagMatch = resolvedText.match(/\((NCAAB|NBA|NFL|FCS|NCAAF|CFB|NHL|MLB)\)\s*$/i);
+  const sportTagMatch = resolvedText.match(/\((NCAAB|NBA|NFL|FCS|NCAAF|CFB|NHL|MLB|SOCCER|MLS|EPL|LALIGA)\)\s*$/i);
   if (sportTagMatch) {
     const detectedSport = sportTagMatch[1].toLowerCase();
     if (detectedSport === 'ncaab' || detectedSport === 'cbb') {
@@ -1932,11 +2144,13 @@ export async function lookupGameByResolvedText(
       sport = 'nhl';
     } else if (detectedSport === 'mlb') {
       sport = 'mlb';
+    } else if (detectedSport === 'soccer' || detectedSport === 'mls' || detectedSport === 'epl' || detectedSport === 'laliga') {
+      sport = detectedSport;
     }
     console.log(`[ESPN] Detected sport from resolved text tag: ${sport}`);
   } else if (pickText) {
     // Also check pickText for sport tags since resolved text may not have one
-    const pickSportMatch = pickText.match(/\((NCAAB|NBA|NFL|FCS|NCAAF|CFB|NHL|MLB)\)/i);
+    const pickSportMatch = pickText.match(/\((NCAAB|NBA|NFL|FCS|NCAAF|CFB|NHL|MLB|SOCCER|MLS|EPL|LALIGA)\)/i);
     if (pickSportMatch) {
       const detectedSport = pickSportMatch[1].toLowerCase();
       if (detectedSport === 'ncaab' || detectedSport === 'cbb') {
@@ -1953,8 +2167,29 @@ export async function lookupGameByResolvedText(
         sport = 'nhl';
       } else if (detectedSport === 'mlb') {
         sport = 'mlb';
+      } else if (detectedSport === 'soccer' || detectedSport === 'mls' || detectedSport === 'epl' || detectedSport === 'laliga') {
+        sport = detectedSport;
       }
       console.log(`[ESPN] Detected sport from pick text tag: ${sport}`);
+    }
+  }
+  
+  // For soccer bets, do a direct team search in the appropriate league
+  const isSoccerSport = ['soccer', 'mls', 'epl', 'laliga', 'bundesliga', 'serie a', 'ligue 1', 'champions league', 'ucl'].includes(sport.toLowerCase());
+  if (isSoccerSport) {
+    console.log(`[ESPN] Soccer bet detected, searching for team in ${sport}`);
+    const soccerResult = await lookupSoccerGame(pickText || resolvedText, resolvedText, sport);
+    if (soccerResult) {
+      return soccerResult;
+    }
+    console.log(`[ESPN] Soccer lookup failed for ${sport}, trying other leagues...`);
+    // Try other major leagues if the specified one failed
+    const leaguesToTry = ['laliga', 'epl', 'bundesliga', 'serie a', 'ligue 1', 'mls'].filter(l => l !== sport.toLowerCase());
+    for (const league of leaguesToTry) {
+      const result = await lookupSoccerGame(pickText || resolvedText, resolvedText, league);
+      if (result) {
+        return result;
+      }
     }
   }
   
@@ -2225,6 +2460,11 @@ export async function lookupGolfBet(pickText: string, resolvedText?: string): Pr
   const tournamentState = tournament.status?.type?.state;
   const isCompleted = tournament.status?.type?.completed;
   
+  // Get current round from competition status.period (correct source)
+  const competitionStatus = tournament.competitions?.[0]?.status;
+  const currentRound = competitionStatus?.period || 1;
+  const totalRounds = 4; // Standard PGA tournament
+  
   let status: 'scheduled' | 'live' | 'final';
   let statusDetail: string;
   
@@ -2233,9 +2473,7 @@ export async function lookupGolfBet(pickText: string, resolvedText?: string): Pr
     statusDetail = 'Final';
   } else if (tournamentState === 'in') {
     status = 'live';
-    // Try to determine current round
-    const roundCount = golfer.linescores?.length || 0;
-    statusDetail = `Round ${roundCount} - Position: ${golfer.order}`;
+    statusDetail = `Round ${currentRound} - Position: ${golfer.order}`;
   } else {
     status = 'scheduled';
     statusDetail = tournament.status?.type?.description || 'Scheduled';
@@ -2246,8 +2484,6 @@ export async function lookupGolfBet(pickText: string, resolvedText?: string): Pr
   let winProbability: number | undefined;
   let gameProgress: number | undefined;
   
-  const totalRounds = 4; // Standard PGA tournament
-  const currentRound = golfer.linescores?.length || 0;
   gameProgress = currentRound / totalRounds;
   
   if (status !== 'scheduled') {

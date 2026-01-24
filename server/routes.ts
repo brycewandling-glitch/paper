@@ -386,6 +386,10 @@ export async function registerRoutes(
           gameDetails = await lookupGameByResolvedText(resolvedText, 'pga', pickText);
         } else if (hasMatchupFormatting) {
           gameDetails = await lookupGameByResolvedText(resolvedText, lookupSport, pickText);
+        } else {
+          // No @ formatting - could be soccer or other sport with simple team name
+          // Try lookupGameByResolvedText which handles soccer detection
+          gameDetails = await lookupGameByResolvedText(resolvedText, lookupSport, pickText);
         }
       }
 

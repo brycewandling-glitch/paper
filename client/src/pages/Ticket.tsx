@@ -297,6 +297,15 @@ export default function Ticket() {
               'spieth', 'thomas', 'cantlay', 'morikawa', 'schauffele', 'finau', 'woodland', 'fowler', 
               'matsuyama', 'fleetwood', 'homa', 'kim'];
             
+            // Soccer teams for detection
+            const soccerTeams = [
+              'real madrid', 'barcelona', 'atletico madrid', 'sevilla', 'villarreal', 'valencia', 'athletic bilbao',
+              'man city', 'manchester city', 'man united', 'manchester united', 'liverpool', 'arsenal', 'chelsea', 'tottenham', 'spurs',
+              'bayern munich', 'bayern', 'borussia dortmund', 'dortmund',
+              'juventus', 'ac milan', 'inter milan', 'napoli', 'roma',
+              'psg', 'paris saint-germain', 'marseille', 'lyon', 'monaco'
+            ];
+            
             const pickTextLower = String(pick.team ?? '').toLowerCase();
             let sport = 'ncaaf'; // Default to college football
 
@@ -304,6 +313,9 @@ export default function Ticket() {
             const hasGolfKeyword = golfKeywords.some(kw => pickTextLower.includes(kw) || resolvedLower.includes(kw));
             const hasGolferName = golferNames.some(name => pickTextLower.includes(name) || resolvedLower.includes(name));
             const isGolfBet = hasGolfKeyword || (hasGolferName && (pickTextLower.includes('to win') || pickTextLower.includes('win')));
+            
+            // Check for soccer bet
+            const hasSoccerTeam = soccerTeams.some(team => pickTextLower.includes(team) || resolvedLower.includes(team));
 
             const hasExplicitNFLTag = /(\(|\b)nfl\b/i.test(pickTextLower);
             const hasExplicitCollegeFootballTag = /(\(|\b)(ncaaf|cfb)\b/i.test(pickTextLower);
@@ -311,9 +323,12 @@ export default function Ticket() {
             const hasExplicitNBATag = /(\(|\b)nba\b/i.test(pickTextLower);
             const hasExplicitNHLTag = /(\(|\b)nhl\b/i.test(pickTextLower);
             const hasExplicitMLBTag = /(\(|\b)mlb\b/i.test(pickTextLower);
+            const hasExplicitSoccerTag = /(\(|\b)(soccer|laliga|epl|mls)\b/i.test(pickTextLower);
 
             if (isGolfBet) {
               sport = 'pga';
+            } else if (hasSoccerTeam || hasExplicitSoccerTag) {
+              sport = 'laliga'; // Default to La Liga, server will search multiple leagues
             } else if (hasExplicitNFLTag) {
               sport = 'nfl';
             } else if (hasExplicitNBATag) {
@@ -535,6 +550,14 @@ export default function Ticket() {
                 statusDetail: gd.statusDetail,
                 winProbability: gd.winProbability,
                 gameProgress: gd.gameProgress,
+                // Golf-specific fields
+                isGolfTournament: gd.isGolfTournament,
+                tournamentName: gd.tournamentName,
+                golferName: gd.golferName,
+                golferPosition: gd.golferPosition,
+                golferScore: gd.golferScore,
+                tournamentRound: gd.tournamentRound,
+                totalRounds: gd.totalRounds,
               };
             }
             return existingPick;
