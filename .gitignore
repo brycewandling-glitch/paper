@@ -7,3 +7,4 @@ vite.config.ts.*
 .env.google.json
 deploy.tar.gz
 release-*.tgz
+flight_tracker/__pycache__/
