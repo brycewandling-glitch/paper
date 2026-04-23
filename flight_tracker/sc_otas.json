@@ -1,0 +1,24 @@
+{
+  "_note": "Sun Country MSP-ANC RT fares scraped via WebFetch from OTA static landing pages (per person, 2 adults default RT). All confirmed within past 7 days at time of scrape (2026-04-23).",
+  "_sources": [
+    "https://www.expedia.com/lp/flight-routes/sun-country-airlines-from-minneapolis-st-paul-intl-to-ted-stevens-anchorage-intl/sy/msp/anc",
+    "https://www.travelocity.com/lp/flight-routes/sun-country-airlines-from-minneapolis-st-paul-intl-to-ted-stevens-anchorage-intl/sy/msp/anc",
+    "https://www.travelocity.com/lp/flight-routes/sun-country-airlines-from-ted-stevens-anchorage-intl-to-minneapolis-st-paul-intl/sy/anc/msp",
+    "https://www.expedia.com/lp/flight-routes/sun-country-airlines-from-ted-stevens-anchorage-intl-to-minneapolis-st-paul-intl/sy/anc/msp",
+    "https://www.expedia.com/lp/flights/msp/anc/minneapolis-to-anchorage"
+  ],
+  "rt_fares_per_pax_2pax_total": [
+    {"per_pax": 366, "total_2pax": 732, "out": "2026-06-26", "ret": "2026-07-01", "out_label": "Fri Jun 26", "ret_label": "Wed Jul 1", "days": 6, "spans_weekend": true, "no_jul4_fly": true, "source": "Expedia"},
+    {"per_pax": 366, "total_2pax": 732, "out": "2026-06-27", "ret": "2026-07-02", "out_label": "Sat Jun 27", "ret_label": "Thu Jul 2", "days": 6, "spans_weekend": true, "no_jul4_fly": true, "source": "Travelocity"},
+    {"per_pax": 366, "total_2pax": 732, "out": "2026-07-20", "ret": "2026-07-27", "out_label": "Mon Jul 20", "ret_label": "Mon Jul 27", "days": 8, "spans_weekend": true, "no_jul4_fly": true, "source": "Travelocity (return-direction page)"},
+    {"per_pax": 373, "total_2pax": 746, "out": "2026-06-26", "ret": "2026-07-01", "out_label": "Fri Jun 26", "ret_label": "Wed Jul 1", "days": 6, "spans_weekend": true, "no_jul4_fly": true, "source": "Travelocity"},
+    {"per_pax": 374, "total_2pax": 748, "out": "2026-06-13", "ret": "2026-06-19", "out_label": "Sat Jun 13", "ret_label": "Fri Jun 19", "days": 7, "spans_weekend": true, "no_jul4_fly": true, "source": "Travelocity"},
+    {"per_pax": 377, "total_2pax": 754, "out": "2026-06-26", "ret": "2026-07-05", "out_label": "Fri Jun 26", "ret_label": "Sun Jul 5", "days": 10, "spans_weekend": true, "no_jul4_fly": true, "source": "Expedia (ANC origin page)"},
+    {"per_pax": 386, "total_2pax": 772, "out": "2026-07-05", "ret": "2026-07-08", "out_label": "Sun Jul 5", "ret_label": "Wed Jul 8", "days": 4, "spans_weekend": false, "no_jul4_fly": true, "source": "Expedia"},
+    {"per_pax": 387, "total_2pax": 774, "out": "2026-06-27", "ret": "2026-07-02", "out_label": "Sat Jun 27", "ret_label": "Thu Jul 2", "days": 6, "spans_weekend": true, "no_jul4_fly": true, "source": "Travelocity (alt fare class)"},
+    {"per_pax": 395, "total_2pax": 790, "out": "2026-06-13", "ret": "2026-06-21", "out_label": "Sat Jun 13", "ret_label": "Sun Jun 21", "days": 9, "spans_weekend": true, "no_jul4_fly": true, "source": "Travelocity"},
+    {"per_pax": 395, "total_2pax": 790, "out": "2026-06-21", "ret": "2026-06-26", "out_label": "Sun Jun 21", "ret_label": "Fri Jun 26", "days": 6, "spans_weekend": true, "no_jul4_fly": true, "source": "Travelocity (return page)"},
+    {"per_pax": 396, "total_2pax": 792, "out": "2026-06-20", "ret": "2026-06-30", "out_label": "Sat Jun 20", "ret_label": "Tue Jun 30", "days": 11, "spans_weekend": true, "no_jul4_fly": true, "source": "Expedia"},
+    {"per_pax": 406, "total_2pax": 812, "out": "2026-06-29", "ret": "2026-07-07", "out_label": "Mon Jun 29", "ret_label": "Tue Jul 7", "days": 9, "spans_weekend": true, "no_jul4_fly": true, "source": "Expedia"}
+  ]
+}
