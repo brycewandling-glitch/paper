@@ -1,0 +1,178 @@
+[
+  {
+    "depart": "2026-06-13",
+    "ret": "2026-06-18",
+    "all_prices": [],
+    "cheapest_oneway_pp": null,
+    "second_oneway_pp": null,
+    "est_rt_per_pax": null,
+    "est_rt_total_2pax": null,
+    "title": "",
+    "label": "Sat Jun 13 \u2192 Thu Jun 18 (5d)"
+  },
+  {
+    "depart": "2026-06-13",
+    "ret": "2026-06-19",
+    "all_prices": [],
+    "cheapest_oneway_pp": null,
+    "second_oneway_pp": null,
+    "est_rt_per_pax": null,
+    "est_rt_total_2pax": null,
+    "title": "",
+    "label": "Sat Jun 13 \u2192 Fri Jun 19 (6d)"
+  },
+  {
+    "depart": "2026-06-19",
+    "ret": "2026-06-23",
+    "all_prices": [],
+    "cheapest_oneway_pp": null,
+    "second_oneway_pp": null,
+    "est_rt_per_pax": null,
+    "est_rt_total_2pax": null,
+    "title": "",
+    "label": "Fri Jun 19 \u2192 Tue Jun 23 (5d)"
+  },
+  {
+    "depart": "2026-06-19",
+    "ret": "2026-06-24",
+    "all_prices": [],
+    "cheapest_oneway_pp": null,
+    "second_oneway_pp": null,
+    "est_rt_per_pax": null,
+    "est_rt_total_2pax": null,
+    "title": "",
+    "label": "Fri Jun 19 \u2192 Wed Jun 24 (6d)"
+  },
+  {
+    "depart": "2026-06-22",
+    "ret": "2026-06-28",
+    "all_prices": [],
+    "cheapest_oneway_pp": null,
+    "second_oneway_pp": null,
+    "est_rt_per_pax": null,
+    "est_rt_total_2pax": null,
+    "title": "",
+    "label": "Mon Jun 22 \u2192 Sun Jun 28 (7d)"
+  },
+  {
+    "depart": "2026-06-22",
+    "ret": "2026-06-29",
+    "all_prices": [],
+    "cheapest_oneway_pp": null,
+    "second_oneway_pp": null,
+    "est_rt_per_pax": null,
+    "est_rt_total_2pax": null,
+    "title": "",
+    "label": "Mon Jun 22 \u2192 Mon Jun 29 (8d)"
+  },
+  {
+    "depart": "2026-06-26",
+    "ret": "2026-06-30",
+    "all_prices": [],
+    "cheapest_oneway_pp": null,
+    "second_oneway_pp": null,
+    "est_rt_per_pax": null,
+    "est_rt_total_2pax": null,
+    "title": "",
+    "label": "Fri Jun 26 \u2192 Tue Jun 30 (5d)"
+  },
+  {
+    "depart": "2026-06-26",
+    "ret": "2026-07-01",
+    "all_prices": [],
+    "cheapest_oneway_pp": null,
+    "second_oneway_pp": null,
+    "est_rt_per_pax": null,
+    "est_rt_total_2pax": null,
+    "title": "",
+    "label": "Fri Jun 26 \u2192 Wed Jul 1 (6d)"
+  },
+  {
+    "depart": "2026-06-26",
+    "ret": "2026-07-02",
+    "all_prices": [],
+    "cheapest_oneway_pp": null,
+    "second_oneway_pp": null,
+    "est_rt_per_pax": null,
+    "est_rt_total_2pax": null,
+    "title": "",
+    "label": "Fri Jun 26 \u2192 Thu Jul 2 (7d)"
+  },
+  {
+    "depart": "2026-08-02",
+    "ret": "2026-08-08",
+    "all_prices": [],
+    "cheapest_oneway_pp": null,
+    "second_oneway_pp": null,
+    "est_rt_per_pax": null,
+    "est_rt_total_2pax": null,
+    "title": "",
+    "label": "Sun Aug 2 \u2192 Sat Aug 8 (7d)"
+  },
+  {
+    "depart": "2026-08-02",
+    "ret": "2026-08-09",
+    "all_prices": [],
+    "cheapest_oneway_pp": null,
+    "second_oneway_pp": null,
+    "est_rt_per_pax": null,
+    "est_rt_total_2pax": null,
+    "title": "",
+    "label": "Sun Aug 2 \u2192 Sun Aug 9 (8d)"
+  },
+  {
+    "depart": "2026-08-10",
+    "ret": "2026-08-16",
+    "all_prices": [],
+    "cheapest_oneway_pp": null,
+    "second_oneway_pp": null,
+    "est_rt_per_pax": null,
+    "est_rt_total_2pax": null,
+    "title": "",
+    "label": "Mon Aug 10 \u2192 Sun Aug 16 (7d)"
+  },
+  {
+    "depart": "2026-08-17",
+    "ret": "2026-08-23",
+    "all_prices": [],
+    "cheapest_oneway_pp": null,
+    "second_oneway_pp": null,
+    "est_rt_per_pax": null,
+    "est_rt_total_2pax": null,
+    "title": "",
+    "label": "Mon Aug 17 \u2192 Sun Aug 23 (7d)"
+  },
+  {
+    "depart": "2026-08-20",
+    "ret": "2026-08-24",
+    "all_prices": [],
+    "cheapest_oneway_pp": null,
+    "second_oneway_pp": null,
+    "est_rt_per_pax": null,
+    "est_rt_total_2pax": null,
+    "title": "",
+    "label": "Thu Aug 20 \u2192 Mon Aug 24 (5d)"
+  },
+  {
+    "depart": "2026-08-20",
+    "ret": "2026-08-25",
+    "all_prices": [],
+    "cheapest_oneway_pp": null,
+    "second_oneway_pp": null,
+    "est_rt_per_pax": null,
+    "est_rt_total_2pax": null,
+    "title": "",
+    "label": "Thu Aug 20 \u2192 Tue Aug 25 (6d)"
+  },
+  {
+    "depart": "2026-08-24",
+    "ret": "2026-08-30",
+    "all_prices": [],
+    "cheapest_oneway_pp": null,
+    "second_oneway_pp": null,
+    "est_rt_per_pax": null,
+    "est_rt_total_2pax": null,
+    "title": "",
+    "label": "Mon Aug 24 \u2192 Sun Aug 30 (7d)"
+  }
+]
